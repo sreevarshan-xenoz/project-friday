@@ -116,7 +116,7 @@ Autonomous Agent & Cognitive Loop:
   friday setup-ai [--keep-others|--only] [provider]
                                    Set or change the AI provider key (local: a model on this computer)
   friday free-tiers [list|on <id>|off <id>]
-                                   Public free models for typed questions only (they may keep what is sent)
+                                   Public free models, opt-in (they may keep what is sent)
   friday connect [--prefer] [claude|codex|agy|cline|hermes]
                                    Use an AI account you already have (signs in);
                                    a fallback after the free models unless --prefer
@@ -4638,8 +4638,9 @@ friday_feature() {
 }
 
 # Public free tiers (LAI-6): providers whose free tier may keep or train on
-# what is sent. One listed in public-providers is used only for a plain typed
-# question; "!id" there is one turned off, still kept from everything else.
+# what is sent. One listed in public-providers answers like any model, or only
+# plain typed questions with free-tiers-everywhere off (the guard); "!id"
+# there is one turned off, still kept from everything else.
 # Turning one off never makes it an ordinary provider again.
 friday_free_tiers() {
   local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/public-providers"
@@ -4647,7 +4648,7 @@ friday_free_tiers() {
   local ids="openrouter groq cerebras gemini nvidia-nim" sub="${1:-list}" id="${2:-}" var state
   case "$sub" in
     list)
-      echo "Public free models (typed questions only):"
+      echo "Public free models:"
       for id in $ids; do
         if grep -qxF -- "$id" "$file" 2>/dev/null; then state=on
         elif grep -qxF -- "!$id" "$file" 2>/dev/null; then state=off
@@ -4680,14 +4681,14 @@ friday_free_tiers() {
     fi
     if [ "${3:-}" != --yes ]; then
       [ -t 0 ] || { echo "friday: add --yes to turn it on from a script" >&2; return 1; }
-      read -r -p "Turn on $id for typed questions? [y/N] " state
+      read -r -p "Turn on $id? [y/N] " state
       [[ "$state" =~ ^[yY] ]] || { echo "Left off."; return 0; }
     fi
   fi
   mkdir -p "$(dirname "$file")"
   { grep -vxF -e "$id" -e "!$id" "$file" 2>/dev/null || true
     if [ "$sub" = on ]; then echo "$id"; else echo "!$id"; fi; } >"$file.tmp" && mv -f "$file.tmp" "$file"
-  if [ "$sub" = on ]; then echo "$id: on for typed questions"; else echo "$id: off"; fi
+  if [ "$sub" = on ]; then echo "$id: on"; else echo "$id: off"; fi
   systemctl --user try-restart friday-linux-daemon.service 2>/dev/null || true
 }
 

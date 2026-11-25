@@ -1972,7 +1972,7 @@ impl InferenceFabric {
         };
         if self.fenced(&provider_name) {
             return Err(format!(
-                "{provider_name} is a public free tier: only typed questions go there"
+                "{provider_name} is a public free tier: with the guard on, only plain typed questions go there"
             ));
         }
         let prov = self.providers.get(&provider_name).ok_or_else(|| {
