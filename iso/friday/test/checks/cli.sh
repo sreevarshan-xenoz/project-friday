@@ -2263,6 +2263,31 @@ contains "a bind with no modifier field" "$kl" "F1"
 contains "a key bound by its code" "$kl" "Super+code:28"
 contains "a mouse button in words" "$kl" "Super+Left click"
 [[ "$kl" != *Print* ]] && pass "a key with no description is left out" || fail "key sheet shows an undescribed key"
+contains "no clash: keys conflicts says so" "$(bash "$F" keys conflicts)" "No other app or bind"
+cat >"$S/hyprctl" <<'HYPR'
+#!/bin/bash
+[[ "$*" == "binds -j" ]] && cat <<'JSON'
+[{"modmask":64,"key":"Y","description":"FRIDAY: Ask","release":false},
+ {"modmask":64,"key":"Y","description":"FRIDAY: Ask (let go)","release":true},
+ {"modmask":64,"key":"y","description":"","release":false,"dispatcher":"exec","arg":"yazi"},
+ {"modmask":72,"key":"V","description":"FRIDAY: Paste as…","release":false},
+ {"modmask":72,"key":"V","description":"Clipboard history","release":false},
+ {"modmask":72,"key":"V","description":"Clipboard (let go)","release":true},
+ {"modmask":68,"key":"Y","description":"FRIDAY: Ask about the screen","release":false},
+ {"modmask":69,"key":"Y","description":"Screenshot","release":false},
+ {"modmask":64,"key":"Y","description":"Resize mode","release":false,"submap":"resize"}]
+JSON
+exit 0
+HYPR
+kc=$(bash "$F" keys conflicts)
+contains "a key bound to FRIDAY and another app is named" "$kc" "Super+Y"
+contains "with what else it runs" "$kc" "exec yazi"
+contains "and by the other bind's own words" "$kc" "Clipboard history"
+[[ "$kc" != *"(let go)"* ]] && pass "a let-go bind doesn't clash with a press" || fail "let-go counted as a clash"
+[[ "$kc" != *Screenshot* ]] && pass "another modifier is another key" || fail "Super+Ctrl+Shift+Y counted as Super+Ctrl+Y"
+[[ "$kc" != *"Resize mode"* ]] && pass "a bind in another submap isn't a clash" || fail "a submap bind counted as a clash"
+dk=$(HYPRLAND_INSTANCE_SIGNATURE=test bash "$F" doctor 2>&1 || true)
+contains "doctor warns about the clash" "$dk" "something else is bound to Super+Alt+V, Super+Y too"
 rm -f "$S/hyprctl"
 # Every command `friday` takes is in its help (the Settings Commands page), apart from aliases and internal ones.
 hl=$(bash "$F" help)
