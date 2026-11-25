@@ -3329,16 +3329,17 @@ impl GoalRunner {
 const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// Whether the cycle's own result is worth showing when the model gave no
-/// answer: a tool that succeeded with something to say is; a failed tool, an
-/// empty memory lookup or nothing isn't.
+/// answer: a tool that succeeded with something to say is; a failed tool, a
+/// memory lookup (empty, or the raw entries it found: context for the model,
+/// not an answer) or nothing isn't.
 fn stands_without_the_model(result: Option<&GoalResult>) -> bool {
     match result {
         None => false,
         Some(r) => {
             let text = r.text.trim();
-            r.success
-                && !text.is_empty()
-                && !(r.tool.as_deref() == Some("memory") && text == "no memory matches yet")
+            let lookup = r.tool.as_deref() == Some("memory")
+                && (text == "no memory matches yet" || text.starts_with("recalled "));
+            r.success && !text.is_empty() && !lookup
         }
     }
 }
@@ -4785,6 +4786,17 @@ mod tests {
         assert!(!stands_without_the_model(Some(&ok(
             "memory",
             "no memory matches yet"
+        ))));
+        // Found entries are context for the model, not an answer (with the
+        // model down, a question must not come back as the recall's dump).
+        assert!(!stands_without_the_model(Some(&ok(
+            "memory",
+            "recalled 1 memory entry:\n1. a question \u{2014} <no result>"
+        ))));
+        // "Remember that …" did its job: that stands.
+        assert!(stands_without_the_model(Some(&ok(
+            "memory",
+            "remembered: my bike is blue"
         ))));
         assert!(!stands_without_the_model(Some(&ok("terminal", "   "))));
         let failed = GoalResult::from_tool_result(&ToolResult::error("no tool for capability"));
