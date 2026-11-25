@@ -1,5 +1,7 @@
 [Unit]
 Description=FRIDAY: keep the text of the windows you look at for three hours (friday recall)
+# Not while the panic switch is on (friday panic off).
+ConditionPathExists=!%S/friday/panic
 # Off unless the person turns it on (friday recall on enables it).
 ConditionUser=!@system
 After=friday-linux-daemon.service

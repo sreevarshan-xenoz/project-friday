@@ -1,5 +1,7 @@
 [Unit]
 Description=FRIDAY Linux Host Daemon
+# Not while the panic switch is on (friday panic off).
+ConditionPathExists=!%S/friday/panic
 # Enabled globally (all users' default.target), but it serves the desktop
 # user: never start it for root or system accounts. A root session (e.g. a
 # root console login) would otherwise take 127.0.0.1:18432 first.

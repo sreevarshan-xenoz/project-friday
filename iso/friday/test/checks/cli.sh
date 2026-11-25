@@ -1981,6 +1981,33 @@ contains "ask-all says it asks before every action" "$(bash "$F" autonomy ask-al
 grep -qx 'FRIDAY_AUTONOMY=ask-all' "$HOME/.config/friday/friday.env" && pass "the daemon gets FRIDAY_AUTONOMY" || fail "FRIDAY_AUTONOMY not in friday.env"
 bash "$F" autonomy ask-risky >/dev/null
 
+echo "panic"
+PB="$W/panic-bin"; mkdir -p "$PB"
+# pkill stubbed: the checks must not stop a real listen on this computer.
+printf '#!/bin/bash\necho "pkill $*" >>%q\n' "$LOG" >"$PB/pkill"; chmod +x "$PB/pkill"
+pn() { PATH="$PB:$PATH" bash "$F" panic "$@"; }
+PF="$HOME/.local/state/friday/panic"; rm -f "$PF"
+contains "panic status: not stopped" "$(pn status)" "Not stopped"
+: >"$LOG"; STUB_INACTIVE= pn on >/dev/null
+contains "panic stops the daemon and what listens or keeps" "$(cat "$LOG")" "systemctl --user stop friday-linux-daemon friday-wake friday-recall friday-clips"
+contains "and any watch" "$(cat "$LOG")" "watch stop"
+contains "and speech" "$(cat "$LOG")" "say --stop"
+contains "and listening (captions, a held Super+Y)" "$(cat "$LOG")" "pkill -u $(id -u) -f friday-ctl listen"
+contains "and says how to turn it back on" "$(cat "$LOG")" "friday panic off"
+[ -s "$PF" ] && pass "it notes what was running" || fail "no panic marker"
+grep -q 'ConditionPathExists=!%S/friday/panic' "$REPO_ROOT/packaging/linux/friday-linux-daemon.service" && pass "the daemon won't start while it is on" || fail "the daemon unit ignores the panic marker"
+out=$(PATH="$PB:$PATH" bash "$F" ask "hello" 2>&1) && fail "an ask went ahead while stopped" || contains "an ask says FRIDAY is stopped" "$out" "panic switch"
+: >"$LOG"; pn off >/dev/null
+contains "panic off starts again what ran" "$(cat "$LOG")" "systemctl --user start friday-linux-daemon"
+[ ! -e "$PF" ] && pass "and the marker goes" || fail "the marker stayed"
+: >"$LOG"; printf 'friday-linux-daemon\n' >"$PF"; pn off >/dev/null
+if grep -q "start friday-wake" "$LOG"; then fail "panic off started what wasn't running"; else pass "only what was running starts again"; fi
+: >"$LOG"; pn toggle >/dev/null; [ -e "$PF" ] && pass "the key turns it on" || fail "the key didn't stop FRIDAY"
+pn toggle >/dev/null; [ ! -e "$PF" ] && pass "and off again" || fail "the key didn't bring FRIDAY back"
+bash "$F" feature panic-key off >/dev/null; pn toggle >/dev/null
+[ ! -e "$PF" ] && pass "with panic-key off the key does nothing" || fail "the key worked while switched off"
+bash "$F" feature panic-key on >/dev/null; rm -f "$PF"
+
 echo "cancel"
 : >"$LOG"
 out=$(HAVE_GOAL=1 bash "$F" cancel 2>&1); rc=$?

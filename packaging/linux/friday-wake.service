@@ -1,5 +1,7 @@
 [Unit]
 Description=FRIDAY: listen for "hey Friday" on the microphone (friday wake)
+# Not while the panic switch is on (friday panic off).
+ConditionPathExists=!%S/friday/panic
 # Off unless the person turns it on (friday wake on enables it).
 ConditionUser=!@system
 After=pipewire.service friday-linux-daemon.service
