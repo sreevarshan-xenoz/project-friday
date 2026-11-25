@@ -3643,9 +3643,22 @@ friday_memory() {
       [ -n "$words" ] || { echo "usage: friday memory forget <words in the line>" >&2; return 2; }
       # Only its "- " lines: headings and notes in the file are yours.
       n=$(awk -v w="${words,,}" '/^- / && index(tolower($0), w) { n++ } END { print n + 0 }' "$f" 2>/dev/null || echo 0)
-      [ "${n:-0}" -gt 0 ] || { echo "No line of $f has \"$words\"."; return 1; }
-      awk -v w="${words,,}" '!(/^- / && index(tolower($0), w))' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
-      echo "Forgot $n line(s) with \"$words\"." ;;
+      if [ "${n:-0}" -gt 0 ]; then
+        awk -v w="${words,,}" '!(/^- / && index(tolower($0), w))' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
+        echo "Forgot $n line(s) with \"$words\"."
+      else
+        echo "No line of $f has \"$words\"."
+      fi
+      # And every copy of it: the journal, conversations, day summaries,
+      # screen recall, answers. The daemon holds some of them, so it stops
+      # while they change.
+      friday_feature_on forget-everywhere || { [ "${n:-0}" -gt 0 ]; return; }
+      local was_up=false
+      if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
+        was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
+      fi
+      friday-ctl forget-everywhere --daemon-stopped "$words" || true
+      if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi ;;
     import)
       # Another assistant's notes (a CLAUDE.md, an exported memory list):
       # a preview of what would be added, then --apply adds it.
@@ -4145,6 +4158,7 @@ tree-trim|A window's text leaves out what the app marks hidden, collapsed menus'
 point-ask|friday ask --point: click one control and ask about it; only it, what it sits in and its neighbours go, as text
 retention|Finished agent runs, the agent hooks log and wrong-answer reports go after 30 days (friday-ctl retention shows every rule)
 screen-quote|An answer about a window ends with the exact line it relied on (From the screen: ...), checked against what was sent
+forget-everywhere|friday memory forget also removes every copy: the journal, conversations, day summaries, screen recall and answers (your thoughts stay)
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
