@@ -1122,6 +1122,7 @@ friday hold start --type|"friday hold end", { release = true })|o.bind("SUPER + 
 friday paste-as|"friday ask --selection")|o.bind("SUPER + ALT + V", "FRIDAY: Paste as…", "friday paste-as")|Added Paste as: copy text, press Super+Alt+V, pick how to paste it.
 friday clips pick|"friday paste-as")|o.bind("SUPER + CTRL + V", "FRIDAY: Clips and snippets", "friday clips pick")|Added clips: Super+Ctrl+V pastes something you copied earlier or a snippet (friday clips on first).
 "friday settings"|"friday hold end", { release = true })|o.bind("SUPER + I", "FRIDAY: Settings", "friday settings")|Added Settings: Super+I opens FRIDAY Settings.
+friday panic toggle|"friday cancel")|o.bind("SUPER + CTRL + SHIFT + Escape", "FRIDAY: Stop everything (again: back on)", "friday panic toggle")|Added the panic switch: Super+Ctrl+Shift+Escape stops agents, voice, capture and routines until pressed again.
 KEYS
       $added || echo "Your keys are up to date." ;;
     *) echo "Usage: friday keys [list|update]" >&2; return 1 ;;

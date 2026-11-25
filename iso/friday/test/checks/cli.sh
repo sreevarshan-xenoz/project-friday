@@ -2213,6 +2213,9 @@ contains "right after the selection key" "$(grep -A1 'friday ask --selection' "$
 grep -vF -- '"friday settings"' "$REPO_ROOT/iso/friday/airootfs/etc/skel/.config/hypr/bindings.lua" >"$HOME/.config/hypr/bindings.lua"
 contains "keys update adds Super+I for Settings" "$(bash "$F" keys update)" "Added Settings"
 contains "right after Super+Y, which every FRIDAY OS home has" "$(grep -A1 '"friday hold end", { release = true })' "$HOME/.config/hypr/bindings.lua")" '"SUPER + I", "FRIDAY: Settings", "friday settings"'
+grep -vF -- '"friday panic toggle"' "$REPO_ROOT/iso/friday/airootfs/etc/skel/.config/hypr/bindings.lua" >"$HOME/.config/hypr/bindings.lua"
+contains "keys update adds the panic switch" "$(bash "$F" keys update)" "Added the panic switch"
+contains "right after the cancel key" "$(grep -A1 '"friday cancel")' "$HOME/.config/hypr/bindings.lua")" '"SUPER + CTRL + SHIFT + Escape"'
 rm -rf "$HOME/.config/hypr"
 contains "keys update without a FRIDAY OS key file does nothing" "$(bash "$F" keys update)" "nothing to update"
 
