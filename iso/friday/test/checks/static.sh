@@ -175,10 +175,10 @@ grep -qx 'friday-git' "$PROFILE_DIR/packages.x86_64" && pass "live ISO installs 
   || fail "friday-git is not in packages.x86_64"
 grep -q 'pacstrap_with_retry -U /mnt "$FRIDAY_PKG"' "$AIROOTFS/root/installer" \
   && pass "installer installs the friday-git package" || fail "installer does not install friday-git"
-grep -q "pocketdesk-\*.pkg.tar.zst" "$AIROOTFS/root/installer" \
-  && pass "installer installs the pocketdesk package" || fail "installer does not install pocketdesk"
-grep -q "packaging/arch/pocketdesk/PKGBUILD" "$PROFILE_DIR/build-iso.sh" \
-  && pass "build-iso.sh builds the pocketdesk package" || fail "build-iso.sh does not build pocketdesk"
+grep -q "friday-mobile-\*.pkg.tar.zst" "$AIROOTFS/root/installer" \
+  && pass "installer installs the friday-mobile package" || fail "installer does not install friday-mobile"
+grep -q "packaging/arch/friday-mobile/PKGBUILD" "$PROFILE_DIR/build-iso.sh" \
+  && pass "build-iso.sh builds the friday-mobile package" || fail "build-iso.sh does not build friday-mobile"
 grep -q 'git clone -q "https://aur.archlinux.org/\$2.git"' "$AIROOTFS/root/installer" \
   && pass "installer builds Brave and Zen from the AUR (never Flathub)" || fail "installer does not build the AUR browsers"
 # The update channel: the installer's [friday] repo must be where release.yml
