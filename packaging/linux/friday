@@ -45,7 +45,7 @@ Autonomous Agent & Cognitive Loop:
                                    workspaces between your machines, end-to-end encrypted
   friday folders [add|rm|list|update] Folders whose notes and PDFs FRIDAY searches, quoting
                                    the file
-  friday mcp [allow|deny <tool>]   Let other AI apps use FRIDAY (MCP); each tool off until allowed
+  friday mcp [servers|on|off <name>|allow|deny <tool>] Use MCP servers; let other apps use FRIDAY
   friday meeting [notes] [--yes]   A meeting's captions become decisions, actions and open
                                    questions, kept with the project
   friday browser [setup|status]    The tab you're on goes to FRIDAY as text (its extension)
@@ -349,7 +349,7 @@ friday_health() {
   command -v friday-ctl >/dev/null 2>&1 && prov=$(timeout 5 friday-ctl providers 2>/dev/null | grep -v '^\s*$' | head -n 4 || true)
   if [ -n "$prov" ]; then printf '  %b AI providers:\n' "$on"; sed 's/^/      /' <<<"$prov"
   else printf '  %b AI providers: nothing to say yet (friday providers)\n' "$off"; fi
-  sw live-web usage-page
+  sw live-web usage-page mcp-tools
   if command -v grim >/dev/null 2>&1 && command -v slurp >/dev/null 2>&1; then printf '  %b Screen asks: Super+Ctrl+Y (each one asks first)\n' "$on"
   else printf '  %b Screen asks: needs grim and slurp\n' "$off"; fi
   if command -v tesseract >/dev/null 2>&1; then printf '  %b Screen words read here: tesseract\n' "$on"
@@ -1652,6 +1652,8 @@ EOF2
 # allowed here: friday_thoughts, friday_timeline, friday_ask.
 friday_mcp() {
   local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/mcp-allow" tool="${2:-}" t
+  local servers_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/mcp-servers.json"
+  local on_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/mcp-on"
   local tools="friday_thoughts friday_timeline friday_ask"
   case "${1:-status}" in
     status)
@@ -1660,6 +1662,41 @@ friday_mcp() {
       for t in $tools; do
         if grep -qx "$t" "$file" 2>/dev/null; then echo "  $t: allowed (friday mcp deny $t)"; else echo "  $t: not allowed (friday mcp allow $t)"; fi
       done ;;
+    servers)
+      echo "MCP servers in $servers_file:"
+      if [ ! -s "$servers_file" ]; then
+        echo "  (none configured)"
+        return 0
+      fi
+      local names
+      names=$(jq -r '.mcpServers // {} | keys[]' "$servers_file" 2>/dev/null || true)
+      if [ -z "$names" ]; then
+        echo "  (none configured)"
+        return 0
+      fi
+      local name st
+      while IFS= read -r name; do
+        if grep -qxF -- "$name" "$on_file" 2>/dev/null; then st="on"; else st="off"; fi
+        printf '  %-20s %s\n' "$name" "$st"
+      done <<<"$names" ;;
+    on|off)
+      local name="${2:-}"
+      [ -n "$name" ] || { echo "Usage: friday mcp $1 <name>" >&2; return 1; }
+      local configured=false
+      jq -e --arg n "$name" '.mcpServers[$n] != null' "$servers_file" >/dev/null 2>&1 && configured=true
+      # Off always works for a name that's on, even one since taken out of the file.
+      [ "$1" = off ] && grep -qxF -- "$name" "$on_file" 2>/dev/null && configured=true
+      if ! $configured; then
+        echo "friday mcp: \"$name\" is not configured in $servers_file" >&2
+        return 1
+      fi
+      mkdir -p "$(dirname "$on_file")"
+      (
+        umask 077
+        { grep -vxF -- "$name" "$on_file" 2>/dev/null || true; [ "$1" = off ] || echo "$name"; } >"$on_file.tmp"
+        mv -f "$on_file.tmp" "$on_file"
+      )
+      echo "$name: $1" ;;
     allow|deny)
       [[ " $tools " == *" $tool "* ]] || { echo "Usage: friday mcp allow|deny <$(tr ' ' '|' <<<"$tools")>" >&2; return 1; }
       mkdir -p "$(dirname "$file")"
@@ -1676,7 +1713,7 @@ friday_mcp() {
       else
         echo "Denied $tool."
       fi ;;
-    *) echo "Usage: friday mcp [allow|deny <tool>]" >&2; return 1 ;;
+    *) echo "Usage: friday mcp [servers | on|off <name> | allow|deny <tool>]" >&2; return 1 ;;
   esac
 }
 
@@ -4144,6 +4181,7 @@ dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.con
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
+mcp-tools|Tools from MCP servers you switch on, each asked before it runs
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
 voice-preview|friday voice preview on: what whisper heard opens in the ask box to edit or drop before it is used
 health-page|friday health: each part of FRIDAY, whether it works here, and its switches

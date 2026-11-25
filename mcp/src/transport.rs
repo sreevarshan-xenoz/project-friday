@@ -123,8 +123,27 @@ impl ProcessLauncher {
         command: &str,
         args: &[String],
     ) -> std::io::Result<(Child, ChildStdin, ChildStdout)> {
+        Self::launch_with_env(
+            command,
+            args,
+            &std::collections::HashMap::<String, String>::new(),
+        )
+    }
+
+    /// Launch `command` with args and environment variables.
+    pub fn launch_with_env<I, K, V>(
+        command: &str,
+        args: &[String],
+        envs: I,
+    ) -> std::io::Result<(Child, ChildStdin, ChildStdout)>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<std::ffi::OsStr>,
+        V: AsRef<std::ffi::OsStr>,
+    {
         let mut child = Command::new(command)
             .args(args)
+            .envs(envs)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
@@ -147,7 +166,25 @@ pub fn stdio_transport_for(
     command: &str,
     args: &[String],
 ) -> std::io::Result<(Box<dyn Transport>, Child)> {
-    let (child, stdin, stdout) = ProcessLauncher::launch(command, args)?;
+    stdio_transport_for_with_env(
+        command,
+        args,
+        &std::collections::HashMap::<String, String>::new(),
+    )
+}
+
+/// Build a stdio [`Transport`] for a server process with environment variables.
+pub fn stdio_transport_for_with_env<I, K, V>(
+    command: &str,
+    args: &[String],
+    envs: I,
+) -> std::io::Result<(Box<dyn Transport>, Child)>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<std::ffi::OsStr>,
+    V: AsRef<std::ffi::OsStr>,
+{
+    let (child, stdin, stdout) = ProcessLauncher::launch_with_env(command, args, envs)?;
     let transport: Box<dyn Transport> = Box::new(StdioTransport::new(stdin, stdout));
     Ok((transport, child))
 }

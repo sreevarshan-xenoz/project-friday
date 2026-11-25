@@ -2792,6 +2792,74 @@ impl GoalRunner {
             exec.cycle(&self.workspace).await
         };
 
+        // Tools from MCP servers the person switched on (`friday mcp on`): the
+        // model picks one or none, the person confirms the exact call, and its
+        // result is what the answer is written from. Never in private mode.
+        let mut mcp_response: Option<SearchResponse> = None;
+        let mut mcp_note: Option<String> = None;
+        if crate::features::on("mcp-tools")
+            && !self.private_mode
+            && crate::mcp_servers::has_servers_on()
+        {
+            let tools = crate::mcp_servers::get_tools().await;
+            // A confirmed run calls exactly what was confirmed; asking the
+            // model again could pick differently and ask again.
+            let confirmed = self.confirmation_gate.lock().unwrap().confirm.clone();
+            let mut pick = confirmed
+                .as_deref()
+                .and_then(|c| crate::mcp_servers::parse_confirmed(c, &tools));
+            if let (None, Some(answerer), false) = (&pick, &self.answerer, tools.is_empty()) {
+                let prompt = crate::mcp_servers::pick_prompt(&goal, &tools);
+                let reply = match tokio::time::timeout(
+                    std::time::Duration::from_secs(45),
+                    answerer.complete_json(&prompt),
+                )
+                .await
+                {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(e)) => {
+                        tracing::warn!("MCP pick failed: {e}");
+                        String::new()
+                    }
+                    Err(_) => {
+                        tracing::warn!("MCP pick timed out");
+                        String::new()
+                    }
+                };
+                pick = crate::mcp_servers::parse_pick(&reply, &tools);
+            }
+            if let Some(pick) = pick {
+                let args_json =
+                    serde_json::to_string(&pick.arguments).unwrap_or_else(|_| "{}".to_string());
+                let exact = format!("{}.{} {}", pick.server, pick.tool, args_json);
+                let check = self
+                    .confirmation_gate
+                    .lock()
+                    .unwrap()
+                    .check_or_record("mcp", &exact);
+                if check.is_ok() {
+                    match crate::mcp_servers::call(&pick).await {
+                        Ok(result) => {
+                            mcp_response = Some(SearchResponse {
+                                backend: format!("{} (MCP)", pick.server),
+                                results: vec![crate::web_search::SearchResult {
+                                    title: pick.tool.clone(),
+                                    url: String::new(),
+                                    snippet: result,
+                                }],
+                            });
+                        }
+                        Err(err) => {
+                            mcp_note = Some(format!(
+                                "{} couldn't answer ({err}), so this is from the model alone.",
+                                pick.server
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         // A confirmation is for this goal only: nothing that runs a tool later
         // (another goal, a background cycle) may reuse it.
         let pending_confirmation = {
@@ -2809,7 +2877,9 @@ impl GoalRunner {
         } else {
             "Web search failed, so this is from the model alone."
         };
-        let (mut web_response, web_search_failed) = if web_blocked {
+        let (mut web_response, web_search_failed) = if let Some(resp) = mcp_response {
+            (Some(resp), false)
+        } else if web_blocked {
             (None, true)
         } else if web {
             let search_query = friday_goal_execution::planning::goal_segment(&goal);
@@ -2907,7 +2977,9 @@ impl GoalRunner {
                 match composed_answer {
                     None => report.cancelled = true,
                     Some(Ok(mut answer)) => {
-                        if let Some(note) = &page_note {
+                        if let Some(note) = &mcp_note {
+                            answer.text = format!("{note}\n\n{}", answer.text.trim());
+                        } else if let Some(note) = &page_note {
                             answer.text = format!("{note}\n\n{}", answer.text.trim());
                         } else if let (false, Some(resp)) = (web, &web_response) {
                             answer.text =

@@ -19,6 +19,7 @@ friday-intelligence = { path = "../intelligence" }
 friday-investigation = { path = "../investigation" }
 friday-context-collector = { path = "../context-collector" }
 friday-windows = { path = "../../plugins/windows" }
+friday-mcp = { path = "../../mcp" }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }

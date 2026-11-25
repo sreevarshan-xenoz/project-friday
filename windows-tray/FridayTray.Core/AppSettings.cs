@@ -118,6 +118,7 @@ public static class AppSettings
         ("propose-memories", "\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)"),
         ("memory-file", "Every ask carries what you asked FRIDAY to remember (memory.md in %APPDATA%\\friday)"),
         ("live-web", "Questions about the weather, news, scores or prices search the web without \"search\" first"),
+        ("mcp-tools", "Tools from MCP servers you switch on, each asked before it runs"),
         ("backup", "Back up settings, memory and history, and restore one after checking it"),
         ("risk-table", "Settings shows what FRIDAY may do on its own, what asks first and what never runs"),
         ("offline-proof", "Settings proves what went off this PC lately and what FRIDAY is connected to now"),
