@@ -102,6 +102,7 @@ Autonomous Agent & Cognitive Loop:
   friday keys list                 Every key and what it does, read from Hyprland (Super+K)
   friday bundles [list|install <bundle>...]  Apps for developer, gaming, productivity or
                                    creative work, installed in one go (no argument: pick)
+  friday keys conflicts            FRIDAY keys that something else in Hyprland is bound to too
   friday keys update               Add FRIDAY keys from a newer version to your key file (FRIDAY OS)
   friday status | system-info      Inspect daemon state, memory, and telemetry
   friday context screen [--yes]    Share screen context with assistant
@@ -546,6 +547,12 @@ friday_doctor() {
       ok "Super+Y is bound to FRIDAY"
     else
       bad "Super+Y isn't bound to FRIDAY (pressing it does nothing)" "friday keys update, then sign in again"; can_fix keys
+    fi
+    if friday_feature_on key-check; then
+      local clash
+      clash=$(friday_keys_conflicts | cut -f1 | sort -u | paste -sd, - | sed 's/,/, /g')
+      if [ -n "$clash" ]; then warn "something else is bound to $clash too" "friday keys conflicts shows what; remove or move the other bind"
+      else ok "no other bind has FRIDAY's keys"; fi
     fi
   else warn "not inside a Hyprland session" "desktop checks below may not apply over SSH/TTY"; fi
   # FRIDAY OS copies its key file into a new home once; keys added later
@@ -1098,10 +1105,40 @@ friday_bundles_install() {
 # FRIDAY OS's key file is copied into a new home once, so keys added by a
 # later update don't reach older homes. `friday keys update` adds the missing
 # FRIDAY keys right after Super+Y and changes nothing else.
+# `friday keys conflicts`: FRIDAY's keys that Hyprland also has bound to
+# something else (two binds on one key both run, or one wins), one per line:
+# "Super+Alt+V<TAB>what else it does". Nothing printed: no clashes.
+friday_keys_conflicts() {
+  local binds
+  binds=$(timeout 3 hyprctl binds -j 2>/dev/null) || binds=""
+  [ -n "$binds" ] || return 0
+  jq -r 'def combo: (.modmask // 0) as $m |
+      [ (if (($m / 64) | floor) % 2 == 1 then "Super" else empty end),
+        (if (($m / 4) | floor) % 2 == 1 then "Ctrl" else empty end),
+        (if (($m / 8) | floor) % 2 == 1 then "Alt" else empty end),
+        (if $m % 2 == 1 then "Shift" else empty end),
+        ((.key // "") | if length == 1 then ascii_upcase else . end) ] | join("+");
+    def friday: (.description // "") | startswith("FRIDAY");
+    def what: if (.description // "") != "" then .description
+      else "\(.dispatcher // "") \(.arg // "")" | gsub("^ +| +$"; "") end;
+    [ .[] | select((.key // "") != "") | . + { c: combo, r: (.release // false) } ] as $b
+    | [ $b[] | select(friday) | [.c, .r] ] as $mine
+    | $b[] | select((friday | not) and ([.c, .r] as $k | $mine | index([$k])))
+    | "\(.c)\t\(what)"' <<<"$binds" 2>/dev/null | sort -u || true
+}
 friday_keys() {
   local keys="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
   case "${1:-update}" in
     list) friday_keys_list ;;
+    conflicts)
+      local c
+      c=$(friday_keys_conflicts)
+      if [ -z "$c" ]; then echo "No other app or bind has FRIDAY's keys."
+      else
+        echo "Also bound to something else (both run, or one wins):"
+        awk -F'\t' '{ printf "  %-22s %s\n", $1, $2 }' <<<"$c"
+        echo "Remove or move the other bind in your Hyprland config, then: hyprctl reload"
+      fi ;;
     update)
       if ! grep -qs '"friday hold start"' "$keys"; then
         echo "No FRIDAY OS key file here ($keys); nothing to update."
@@ -4444,6 +4481,7 @@ friday_local_ai_bench() {
 FRIDAY_FEATURES="whats-new|After an update, one card says what changed and which switches are new
 panic-key|Super+Ctrl+Shift+Escape stops agents, voice, capture and routines at once (friday panic)
 voice-vad|A small speech detector checks a piece has a voice in it before whisper runs
+key-check|friday doctor says when another bind has one of FRIDAY's keys
 instant-answers|Arithmetic and unit conversions worked out here at once
 motion|FRIDAY Shell's animations: the answer card, drawers and the pulsing orb (off: everything changes at once)
 app-bundles|The first-login tour offers app bundles (developer, gaming, productivity, creative) to install in one go

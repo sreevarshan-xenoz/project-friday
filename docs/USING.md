@@ -338,6 +338,8 @@ Tell FRIDAY what's wrong, for example `friday ask "my wifi keeps dropping"`, `"w
 
 A fixed list decides which commands may run, not the AI. Each command may only take the options on its list, so ones that print secrets (saved Wi-Fi passwords, a process's environment) or read a file they're given are refused too. Nothing that changes your system runs here: no restarts, no installs, no `sudo`, no reading your files or keys. When the fix needs such a command, FRIDAY tells you what it is so you can run it yourself, or say `friday ask "run <command>"`, which asks you first. Command output has secrets masked before it goes to your AI provider. `FRIDAY_DIAGNOSE=0` turns troubleshooting off.
 
+A FRIDAY key that does nothing, or does something else too, is often bound twice. `friday doctor` warns when another Hyprland bind has one of FRIDAY's keys, and `friday keys conflicts` names what else it runs (switch: `friday feature key-check off`). On Windows the tray already falls back to another key when one is taken, such as Ctrl+Alt+Y for Win+Y.
+
 ## Your phone (FRIDAY Mobile)
 
 The installer offers pairing at first login unless you untick it (the "What may FRIDAY do?" step). FRIDAY OS installs [FRIDAY Mobile](https://github.com/sreevarshan-xenoz/friday-mobile), FRIDAY's phone app, which shows this computer on your Android phone and lets the phone act as its screen, keyboard and remote. It stays off until you turn it on: `friday phone on` asks first, starts it in your session and prints a PIN to enter in the FRIDAY Mobile app on the phone (`friday-mobile-…-android-arm64.apk` from its releases); `friday phone off` stops it and `friday phone status` says where it stands.
