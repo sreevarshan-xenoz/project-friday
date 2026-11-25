@@ -22,7 +22,9 @@ Singleton {
   property bool camera: false
 
   // keys: shown as keycaps. action: a button that runs `command` in a terminal.
-  readonly property var steps: [
+  // Offered unless switched off (friday feature app-bundles off).
+  property bool bundles: true
+  readonly property var steps: ([
     { title: "Hello" + (root.name ? ", " + root.name : "") + ". I'm FRIDAY.",
       keys: "Super+Y",
       body: "Press it now and ask me anything. Tap to type; once voice is set up, hold it and speak.",
@@ -47,6 +49,12 @@ Singleton {
       action: { label: "Set up face unlock", command: "friday face setup" },
       waits: false }
   ] : []).concat([
+    { title: "Install the apps you use",
+      keys: "",
+      body: "Pick kinds of apps (developer, gaming, productivity, creative) and FRIDAY installs them in one go, from the Arch repos where it can. One that fails never stops the rest; you get a notification when it's done. See what's in each: friday bundles list",
+      action: { label: "Pick apps", command: "friday bundles" },
+      waits: false,
+      bundles: true },
     { title: "The rest of your desktop",
       keys: "",
       body: "Tap Super for apps · Super+N for controls and notifications · Super+L to lock · Super+K for every key. Take this tour again any time with: friday tour",
@@ -57,7 +65,7 @@ Singleton {
       body: "Pocketdesk shows this computer on your phone and lets it answer FRIDAY's questions. Pairing shows a PIN to type on the phone.",
       action: { label: "Pair my phone", command: "friday phone on" },
       waits: false }
-  ] : [])
+  ] : [])).filter(s => !s.bundles || root.bundles)
   readonly property var current: steps[Math.min(step, steps.length - 1)]
   readonly property bool last: step >= steps.length - 1
 
@@ -73,6 +81,15 @@ Singleton {
     cameraCheck.running = true;
   }
 
+  Process {
+    id: bundlesCheck
+    command: ["sh", "-c", "friday feature app-bundles status 2>/dev/null | grep -q ': on'"]
+    onExited: code => {
+      root.bundles = code === 0;
+      root.active = true;
+    }
+  }
+
   // Only a camera FRIDAY could use, and only while face unlock is off. In
   // tests FRIDAY_VIDEO_DEVS stands in for /dev/video* and FRIDAY_FACE_PAM for
   // the face unlock PAM file.
@@ -81,7 +98,7 @@ Singleton {
     command: ["sh", "-c", "[ -e \"${FRIDAY_FACE_PAM:-/etc/pam.d/friday-lock-face}\" ] && exit 1; for d in ${FRIDAY_VIDEO_DEVS:-/dev/video*}; do [ -e \"$d\" ] && exit 0; done; exit 1"]
     onExited: code => {
       root.camera = code === 0;
-      root.active = true;
+      bundlesCheck.running = true;
     }
   }
   function next() { if (root.last) root.finish(); else root.step++; }

@@ -1,0 +1,10 @@
+# Developer: editors (Neovim, VS Code open-source build, Zed), Claude Code, git and its tools
+neovim
+code
+zed
+git
+github-cli
+lazygit
+ripgrep
+fd
+aur:claude-code

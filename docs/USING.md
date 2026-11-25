@@ -232,6 +232,19 @@ checks that everything is running; `friday report` writes a redacted bug report.
 springing or pulsing; `friday.nomotion` on the installer's boot line keeps its
 waiting screen still too.
 
+## App bundles
+
+`friday bundles` installs apps for a kind of work in one go: developer
+(Neovim, VS Code's open-source build, Zed, Claude Code, git tools), gaming
+(Steam, Lutris, Wine, GameMode), productivity (LibreOffice, Obsidian,
+Thunderbird) or creative (GIMP, Inkscape, Krita, Blender, Kdenlive, OBS).
+Apps come from the Arch repos where they're there, and from the AUR (built as
+you, never as root) where they're not. One that fails never stops the rest;
+the end says what didn't install and how to try again, and a notification says
+it's done. Gaming turns on Arch's 32-bit `multilib` repo, which Steam needs.
+`friday bundles list` shows what's in each. The first-login tour offers them;
+`friday feature app-bundles off` takes that step out.
+
 ## Face unlock
 
 The lock screen can know your face. The first-login tour offers it when the
