@@ -2221,6 +2221,9 @@ printf '#!/bin/bash\necho "sudo $*" >>"%s/log"\n"$@"\n' "$B" >"$B/bin/sudo"
 printf '#!/bin/bash\necho "pacman $*" >>"%s/log"\n[[ -n "${FAIL_PKG:-}" && " $* " == *" $FAIL_PKG "* ]] && exit 1\nexit 0\n' "$B" >"$B/bin/pacman"
 printf '#!/bin/bash\necho "git $*" >>"%s/log"\nmkdir -p "${@: -1}"\n' "$B" >"$B/bin/git"
 printf '#!/bin/bash\necho "makepkg $PWD" >>"%s/log"\n[[ -n "${FAIL_AUR:-}" && "$PWD" == *"$FAIL_AUR" ]] && exit 1\nexit 0\n' "$B" >"$B/bin/makepkg"
+# `id -u` answers as a normal user (CI runs the checks as root), or as root
+# with AS_ROOT=1.
+printf '#!/bin/bash\nif [ "$1" = -u ]; then [ -n "${AS_ROOT:-}" ] && echo 0 || echo 1000; else exec /usr/bin/id "$@"; fi\n' >"$B/bin/id"
 chmod +x "$B/bin"/*
 bl() { PATH="$B/bin:$PATH" XDG_CACHE_HOME="$B/cache" bash "$F" bundles "$@"; }
 out=$(bl list)
@@ -2237,6 +2240,9 @@ contains "and it says which and how to retry" "$out" "Didn't install: obsidian (
 contains "an AUR app is built as you, not root" "$(cat "$B/log")" "makepkg $B/cache/friday-aur/claude-code"
 if grep -q "sudo makepkg" "$B/log"; then fail "makepkg ran as root"; else pass "makepkg never runs as root"; fi
 contains "a failed AUR build is named" "$out" "Didn't install: claude-code"
+: >"$B/log"; out=$(AS_ROOT=1 bl install developer 2>&1 || true)
+contains "as root, AUR apps wait for a run as yourself" "$out" "Run friday bundles as yourself"
+if grep -q "^makepkg" "$B/log"; then fail "makepkg ran as root"; else pass "and makepkg doesn't run"; fi
 : >"$B/log"; bl install gaming >/dev/null 2>&1 || true
 contains "Steam turns on multilib first" "$(cat "$FRIDAY_PACMAN_CONF")" $'[multilib]\nInclude'
 contains "the core section is untouched" "$(cat "$FRIDAY_PACMAN_CONF")" $'[core]\nInclude'
