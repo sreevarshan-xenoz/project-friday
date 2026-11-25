@@ -234,6 +234,9 @@ fi
 if [[ "\$*" == *"--scheduled"* ]]; then
   printf 'friday-ctl-scheduled %s\n' "\$*" >> "$LOG"
 fi
+if [[ "\$*" == *"--typed"* ]]; then
+  printf 'friday-ctl-typed %s\n' "\$*" >> "$LOG"
+fi
 echo '{"accepted":true}'
 if [[ "\$target_arg" == *nodaemon* ]]; then echo "no token found; daemon not running at /x/state.json (is friday-linux-daemon up?)" >&2; exit 1; fi
 if [[ "\$target_arg" == *streamfail* ]]; then echo '{"partial":"Half an ans"}'; sleep 0.7; printf '{\n "outcome": "failed",\n "error": "network unreachable"\n}\n'; exit 1; fi
@@ -576,6 +579,26 @@ contains "and its status says so" "$(bash "$F" feature instant-answers status)" 
 bash "$F" feature instant-answers on >/dev/null
 contains "and on again" "$(bash "$F" feature list)" "on   instant-answers"
 refuse "an unknown feature is refused" bash "$F" feature nosuchthing off
+# Public free tiers (LAI-6): opt-in with a red warning, the guard a switch.
+: >"$LOG"; bash "$F" ask "what is a monad"; sleep 0.3
+contains "a plain typed question is marked typed" "$(cat "$LOG")" "friday-ctl-typed"
+: >"$LOG"; FRIDAY_STANDING=1 bash "$F" ask "what is a monad"; sleep 0.3
+if grep -q "friday-ctl-typed" "$LOG"; then fail "a standing task was marked typed"; else pass "a standing task is not marked typed"; fi
+refuse "a free tier needs its key first" bash "$F" free-tiers on groq --yes
+refuse "an unknown free tier is refused" bash "$F" free-tiers on nosuch --yes
+echo "GROQ_API_KEY=placeholder-key" >>"$HOME/.config/friday/friday.env"
+out=$(bash "$F" free-tiers on groq --yes 2>&1)
+contains "turning one on shows the red warning" "$out" "treat it as public"
+contains "and says it answers every ask, and how to keep it to typed ones" "$out" "free-tiers-everywhere off"
+contains "it is listed on" "$(bash "$F" free-tiers list)" "groq        on"
+bash "$F" free-tiers off groq >/dev/null
+contains "off keeps it listed as public, off" "$(cat "$HOME/.config/friday/public-providers")" "!groq"
+contains "and the list says off" "$(bash "$F" free-tiers list)" "groq        off"
+bash "$F" feature free-tiers-everywhere off >/dev/null
+contains "with everywhere off, the list says the guard is on" "$(bash "$F" free-tiers list)" "Guard on"
+contains "and turning one on says so" "$(bash "$F" free-tiers on groq --yes 2>&1)" "only plain typed questions"
+bash "$F" feature free-tiers-everywhere on >/dev/null
+rm -f "$HOME/.config/friday/public-providers"; sed -i '/^GROQ_API_KEY=placeholder-key$/d' "$HOME/.config/friday/friday.env"
 rm -f "$S/qalc"
 shapes=$(bash -c 'source <(sed -n "/^friday_calc_expr() {/,/^}/p" "$1"); shift; for q in "$@"; do friday_calc_expr "$q" >/dev/null && printf "Y" || printf "."; done' _ "$F" \
   "2026-11-22" "123-456-7890" "192.0.2.1/24" "1.0.0-1" "24/7" "50/50" "--5 + 2" "10 - 3" "-40 c to f")

@@ -38,6 +38,112 @@ pub const PROVIDER_ENV_VARS: [(&str, &str); 15] = [
     ("AXFORGE_API_KEY", "axforge"),
 ];
 
+tokio::task_local! {
+    /// Set by an ask that may use public free tiers (LAI-6); see [`public_tier_gate`].
+    static PUBLIC_GATE: Arc<std::sync::atomic::AtomicBool>;
+}
+
+/// Run `f` with a closed gate for public free tiers: providers in
+/// [`InferenceFabric::public`] stay out of every request made inside `f`
+/// until [`open_public_tier_gate`] is called there. Outside such a scope (and
+/// in tasks spawned from it) the gate is always closed.
+pub async fn public_tier_gate<F: std::future::Future>(f: F) -> F::Output {
+    PUBLIC_GATE
+        .scope(Arc::new(std::sync::atomic::AtomicBool::new(false)), f)
+        .await
+}
+
+/// Let the rest of this ask use public free tiers. Only a plain typed
+/// question, with nothing added to it, calls this.
+pub fn open_public_tier_gate() {
+    let _ = PUBLIC_GATE.try_with(|g| g.store(true, std::sync::atomic::Ordering::SeqCst));
+}
+
+/// Whether one of FRIDAY's switches is on (`friday feature`): not listed in
+/// `features-off` in FRIDAY's config folder nor in `FRIDAY_FEATURES_OFF`
+/// (Windows); the same check as friday-mobile's. Read each time, so a switch
+/// counts from the next request.
+fn feature_on(name: &str) -> bool {
+    let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    let file = dir
+        .and_then(|d| std::fs::read_to_string(d.join("friday").join("features-off")).ok())
+        .unwrap_or_default();
+    let var = std::env::var("FRIDAY_FEATURES_OFF").unwrap_or_default();
+    !file.lines().any(|l| l.trim() == name) && !var.split(',').any(|v| v.trim() == name)
+}
+
+/// A listed public tier is kept out when it is turned off, when the
+/// `free-tiers` switch is off, or when the guard is on and the ask did not
+/// open the gate.
+fn public_tier_shut(turned_off: bool, switch_on: bool, guard_on: bool, gate_open: bool) -> bool {
+    turned_off || !switch_on || (guard_on && !gate_open)
+}
+
+/// Tests that need the guard on switch `free-tiers-everywhere` off through
+/// the variable (no test needs it on, so they don't race).
+#[cfg(test)]
+fn guard_on_for_test() {
+    std::env::set_var("FRIDAY_FEATURES_OFF", "free-tiers-everywhere");
+}
+
+fn public_tier_gate_open() -> bool {
+    PUBLIC_GATE
+        .try_with(|g| g.load(std::sync::atomic::Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
+/// The public free tiers a person may turn on (`friday free-tiers`).
+pub const PUBLIC_TIER_PROVIDERS: [&str; 5] =
+    ["openrouter", "groq", "cerebras", "gemini", "nvidia-nim"];
+
+/// The public free tiers the person listed, from `public-providers` in
+/// FRIDAY's config folder: one id a line, `!id` for one turned off (still
+/// public, so still kept from everything else); unknown ids are ignored.
+/// Returns (listed, turned off).
+pub fn public_tiers_from_config() -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+) {
+    let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    let Some(dir) = dir else {
+        return Default::default();
+    };
+    public_tiers_from_str(
+        &std::fs::read_to_string(dir.join("friday").join("public-providers")).unwrap_or_default(),
+    )
+}
+
+fn public_tiers_from_str(
+    text: &str,
+) -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+) {
+    let (mut listed, mut off) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+    );
+    for line in text.lines().map(str::trim) {
+        let (id, is_off) = match line.strip_prefix('!') {
+            Some(id) => (id.trim(), true),
+            None => (line, false),
+        };
+        if PUBLIC_TIER_PROVIDERS.contains(&id) {
+            listed.insert(id.to_string());
+            if is_off {
+                off.insert(id.to_string());
+            }
+        }
+    }
+    (listed, off)
+}
+
 /// Pluggable interface for calling large language models.
 /// Isolating this ensures we can swap backends (e.g. Gemini to OpenAI)
 /// without touching prompt compilers or response interpreters.
@@ -216,18 +322,9 @@ pub enum CircuitState {
     HalfOpen,
 }
 
-/// Whether the `key-pools` switch is on (FRIDAY's `features-off` list, or
-/// `FRIDAY_FEATURES_OFF` on Windows; the same check as friday-mobile's).
+/// Whether the `key-pools` switch is on.
 fn key_pools_on() -> bool {
-    let file = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-        .map(|d| std::fs::read_to_string(d.join("friday/features-off")).unwrap_or_default())
-        .unwrap_or_default();
-    let var = std::env::var("FRIDAY_FEATURES_OFF").unwrap_or_default();
-    !file.lines().any(|l| l.trim() == "key-pools")
-        && !var.split(',').any(|v| v.trim() == "key-pools")
+    feature_on("key-pools")
 }
 
 /// The keys of a pool (`k1,k2`, spaces ignored); one key is a pool of one.
@@ -1429,6 +1526,11 @@ pub struct InferenceFabric {
     pub automatic: std::collections::BTreeSet<String>,
     /// When true, only local models are selected and no request ever leaves the machine.
     pub private_mode: bool,
+    /// Public free tiers the person turned on (LAI-6): used only inside an
+    /// ask whose gate is open (a plain typed question), never otherwise.
+    pub public: std::collections::BTreeSet<String>,
+    /// Listed public tiers the person turned off: kept out even of typed asks.
+    pub public_off: std::collections::BTreeSet<String>,
 }
 
 impl InferenceFabric {
@@ -1457,7 +1559,24 @@ impl InferenceFabric {
             },
             automatic: std::collections::BTreeSet::new(),
             private_mode: false,
+            public: std::collections::BTreeSet::new(),
+            public_off: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// Whether `provider` is a public free tier this request may not use:
+    /// one turned off, or all of them with the `free-tiers` switch off. With
+    /// `free-tiers-everywhere` on (the default) they serve every ask like any
+    /// other provider (private mode still keeps everything local); switched
+    /// off, the guard: only an ask that opened the gate.
+    fn fenced(&self, provider: &str) -> bool {
+        self.public.contains(provider)
+            && public_tier_shut(
+                self.public_off.contains(provider),
+                feature_on("free-tiers"),
+                !feature_on("free-tiers-everywhere"),
+                public_tier_gate_open(),
+            )
     }
 
     /// Builder method to enable or disable private mode.
@@ -1851,6 +1970,11 @@ impl InferenceFabric {
                 .ok_or_else(|| format!("no model registered for {provider} tier {}", tier.tag()))?;
             (provider.to_string(), m.clone())
         };
+        if self.fenced(&provider_name) {
+            return Err(format!(
+                "{provider_name} is a public free tier: only typed questions go there"
+            ));
+        }
         let prov = self.providers.get(&provider_name).ok_or_else(|| {
             if self.private_mode {
                 "Private mode is on and no local model is running (start it: friday private on)"
@@ -1955,6 +2079,9 @@ impl InferenceFabric {
 
         for model in &self.models {
             if self.private_mode && !model.capabilities.contains(&ModelCapability::Local) {
+                continue;
+            }
+            if self.fenced(&model.provider) {
                 continue;
             }
 
@@ -2109,6 +2236,9 @@ impl InferenceFabric {
 
         for model in &self.models {
             if self.private_mode && !model.capabilities.contains(&ModelCapability::Local) {
+                continue;
+            }
+            if self.fenced(&model.provider) {
                 continue;
             }
             if !Self::requirements_met(req, model) {
@@ -2380,6 +2510,7 @@ impl InferenceFabric {
         if is_private {
             fabric.set_private_mode(true);
         }
+        (fabric.public, fabric.public_off) = public_tiers_from_config();
         let security_vault = Arc::new(SecretsVault::new());
 
         // Attempt to load dynamic model registry from workspace config file
@@ -5700,6 +5831,110 @@ mod tests {
         fabric
     }
 
+    /// LAI-6: a public free tier the person turned on is never a candidate
+    /// unless the ask opened its gate; outside a gate scope (and in tasks
+    /// spawned from one) it stays out. Unlisted providers are unchanged.
+    #[tokio::test]
+    async fn a_public_tier_is_used_only_inside_an_opened_gate() {
+        guard_on_for_test();
+        let mut fabric = budget_fabric();
+        fabric.public.insert("groq".to_string());
+        let req = RequestRequirements::default();
+        let picks = |f: &InferenceFabric| -> Vec<String> {
+            f.select_for(&req)
+                .into_iter()
+                .map(|(m, _)| m.provider)
+                .collect()
+        };
+        let mode_picks = |f: &InferenceFabric| -> Vec<String> {
+            f.select_candidates(RoutingMode::Fast)
+                .into_iter()
+                .map(|(m, _)| m.provider)
+                .collect()
+        };
+
+        // No gate at all (a screen ask, a helper, a spawned task).
+        assert!(!picks(&fabric).contains(&"groq".to_string()));
+        assert!(picks(&fabric).contains(&"openrouter".to_string()));
+        assert!(!mode_picks(&fabric).contains(&"groq".to_string()));
+
+        // A gate left closed (anything but a plain typed question).
+        let closed = public_tier_gate(async { picks(&fabric) }).await;
+        assert!(!closed.contains(&"groq".to_string()));
+
+        // An opened gate: the typed question may use it.
+        let open = public_tier_gate(async {
+            open_public_tier_gate();
+            (picks(&fabric), mode_picks(&fabric))
+        })
+        .await;
+        assert!(open.0.contains(&"groq".to_string()));
+        assert!(open.1.contains(&"groq".to_string()));
+
+        // A task spawned inside an opened gate does not carry it.
+        let fabric = Arc::new(fabric);
+        let f2 = fabric.clone();
+        let spawned = public_tier_gate(async move {
+            open_public_tier_gate();
+            tokio::spawn(async move {
+                f2.select_for(&RequestRequirements::default())
+                    .into_iter()
+                    .map(|(m, _)| m.provider)
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap()
+        })
+        .await;
+        assert!(!spawned.contains(&"groq".to_string()));
+
+        // Turned off: kept out even of an opened gate.
+        let mut off = budget_fabric();
+        off.public.insert("groq".to_string());
+        off.public_off.insert("groq".to_string());
+        let shut = public_tier_gate(async {
+            open_public_tier_gate();
+            picks(&off)
+        })
+        .await;
+        assert!(!shut.contains(&"groq".to_string()));
+
+        // Without the list, groq is an ordinary provider again.
+        let mut plain = budget_fabric();
+        plain.public.clear();
+        assert!(picks(&plain).contains(&"groq".to_string()));
+    }
+
+    /// The person decides: with the guard switched off a public tier they
+    /// turned on serves every ask; with `free-tiers` off, or the tier off, none.
+    #[test]
+    fn the_guard_and_the_switches_decide_when_a_public_tier_serves() {
+        // (turned off, free-tiers on, guard on, gate open) -> shut
+        assert!(public_tier_shut(false, true, true, false)); // guard on, screen ask
+        assert!(!public_tier_shut(false, true, true, true)); // guard on, typed ask
+        assert!(!public_tier_shut(false, true, false, false)); // guard off: every ask
+        assert!(public_tier_shut(false, false, false, true)); // free-tiers off
+        assert!(public_tier_shut(true, true, false, true)); // this tier turned off
+    }
+
+    #[test]
+    fn the_public_tier_list_keeps_known_ids_only() {
+        let (listed, off) =
+            public_tiers_from_str("groq\n# note\n  gemini  \nsomething-else\ngroq\n!cerebras\n");
+        assert_eq!(
+            listed.into_iter().collect::<Vec<_>>(),
+            vec![
+                "cerebras".to_string(),
+                "gemini".to_string(),
+                "groq".to_string()
+            ]
+        );
+        assert_eq!(
+            off.into_iter().collect::<Vec<_>>(),
+            vec!["cerebras".to_string()]
+        );
+    }
+
     /// A thorough answer ranks for quality: a connected account, then a
     /// provider with the person's key, then the free reasoning tier, then the
     /// automatic free models; the model being retried goes last, not away.
@@ -8374,6 +8609,36 @@ mod v2_tests {
             vision_res.unwrap_err(),
             "Private mode is on and no local model is running (start it: friday private on)"
         );
+    }
+
+    /// LAI-6 exit test, screen half: a pinned vision provider that is a
+    /// public tier is refused outside an opened gate, never sent the image.
+    #[tokio::test]
+    async fn a_pinned_public_tier_is_refused_for_a_screen_ask() {
+        super::guard_on_for_test();
+        let mut fabric = InferenceFabric::new();
+        fabric.register_provider(Box::new(TestReplyProvider {
+            name: "gemini",
+            reply: "cloud vision reply",
+        }));
+        fabric.register_model(test_model(
+            "gemini-flash",
+            "gemini",
+            10,
+            &[ModelCapability::Vision],
+            Some(CapabilityTier::VisionFree),
+        ));
+        fabric.public.insert("gemini".to_string());
+        let err = fabric
+            .complete_tier("gemini", CapabilityTier::VisionFree, "[image]", false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("public free tier"), "{err}");
+        fabric.public.clear();
+        assert!(fabric
+            .complete_tier("gemini", CapabilityTier::VisionFree, "[image]", false)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]

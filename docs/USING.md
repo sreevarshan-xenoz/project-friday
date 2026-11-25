@@ -75,6 +75,21 @@ Some things FRIDAY does itself and sends nowhere: volume, mute, do not disturb,
 battery, timers, opening Wi-Fi settings. The answer says
 "On this computer · nothing was sent".
 
+## Public free models
+
+Groq, Cerebras, Gemini, NVIDIA NIM and OpenRouter's free models give out free
+keys, but their free tiers may keep or train on what is sent. Add a key with
+`friday setup-ai --keep-others groq`, then turn it on with
+`friday free-tiers on groq`: it says so in red first. `friday free-tiers list`
+shows which are on; `friday free-tiers off groq` stops using one.
+
+Once on, it answers like your other models, the screen and selections too.
+To keep them to questions you typed with nothing added (not the screen, a
+selection, the clipboard, a file, a page, your memory, the about-me line or
+earlier turns), switch on the guard: `friday feature free-tiers-everywhere off`
+(Settings → Features). Private mode still keeps every ask on this computer.
+`friday feature free-tiers off` stops using all of them.
+
 ## Control the desktop (FRIDAY OS)
 
 On FRIDAY OS, tell FRIDAY what to do with your windows and apps and it does it:

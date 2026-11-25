@@ -115,6 +115,8 @@ Autonomous Agent & Cognitive Loop:
   friday report [file]             Write a redacted bug report to read and share
   friday setup-ai [--keep-others|--only] [provider]
                                    Set or change the AI provider key (local: a model on this computer)
+  friday free-tiers [list|on <id>|off <id>]
+                                   Public free models for typed questions only (they may keep what is sent)
   friday connect [--prefer] [claude|codex|agy|cline|hermes]
                                    Use an AI account you already have (signs in);
                                    a fallback after the free models unless --prefer
@@ -4525,6 +4527,8 @@ friday_local_ai_bench() {
 # are listed, one a line, in features-off in FRIDAY's config folder.
 FRIDAY_FEATURES="whats-new|After an update, one card says what changed and which switches are new
 meeting-notes|A call's decisions and to-dos are kept with your answers, found by friday answers search
+free-tiers|Public free models you turned on (friday free-tiers) can answer (off: none of them is used)
+free-tiers-everywhere|Public free models you turned on answer every ask, the screen and selections too (off: only plain typed questions with nothing added)
 panic-key|Super+Ctrl+Shift+Escape stops agents, voice, capture and routines at once (friday panic)
 voice-vad|A small speech detector checks a piece has a voice in it before whisper runs
 key-check|friday doctor says when another bind has one of FRIDAY's keys
@@ -4631,6 +4635,60 @@ friday_feature() {
         *) echo "Usage: friday feature [list | <name> status|on|off]" >&2; return 1 ;;
       esac ;;
   esac
+}
+
+# Public free tiers (LAI-6): providers whose free tier may keep or train on
+# what is sent. One listed in public-providers is used only for a plain typed
+# question; "!id" there is one turned off, still kept from everything else.
+# Turning one off never makes it an ordinary provider again.
+friday_free_tiers() {
+  local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/public-providers"
+  local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  local ids="openrouter groq cerebras gemini nvidia-nim" sub="${1:-list}" id="${2:-}" var state
+  case "$sub" in
+    list)
+      echo "Public free models (typed questions only):"
+      for id in $ids; do
+        if grep -qxF -- "$id" "$file" 2>/dev/null; then state=on
+        elif grep -qxF -- "!$id" "$file" 2>/dev/null; then state=off
+        else state="not added"; fi
+        printf '  %-11s %s\n' "$id" "$state"
+      done
+      friday_feature_on free-tiers || echo "The free-tiers switch is off: none of them is used (friday feature free-tiers on)."
+      if friday_feature_on free-tiers-everywhere; then
+        echo "They answer every ask like your other models (private mode still stays on this computer)."
+        echo "To keep them to plain typed questions: friday feature free-tiers-everywhere off"
+      else
+        echo "Guard on: they answer only a typed question with nothing added (no screen, selection, memory or earlier turns)."
+      fi
+      return 0 ;;
+    on|off) ;;
+    *) echo "Usage: friday free-tiers [list | on <id> | off <id>]" >&2; return 1 ;;
+  esac
+  [[ " $ids " == *" $id "* ]] || { echo "friday: choose one of: $ids" >&2; return 1; }
+  if [ "$sub" = on ]; then
+    var=$(tr 'a-z-' 'A-Z_' <<<"$id")_API_KEY
+    if ! grep -qE "^${var}=[^[:space:]]" "$env_file" 2>/dev/null; then
+      echo "friday: $id needs its free key first: friday setup-ai --keep-others $id" >&2
+      return 1
+    fi
+    printf '\e[31m%s may keep or train on what is sent to it: treat it as public.\e[0m\n' "$id"
+    if friday_feature_on free-tiers-everywhere; then
+      echo "It answers every ask, the screen and selections too. To keep it to plain typed questions: friday feature free-tiers-everywhere off"
+    else
+      echo "Guard on: only plain typed questions go there, never the screen, a selection, the clipboard, memory or a private window."
+    fi
+    if [ "${3:-}" != --yes ]; then
+      [ -t 0 ] || { echo "friday: add --yes to turn it on from a script" >&2; return 1; }
+      read -r -p "Turn on $id for typed questions? [y/N] " state
+      [[ "$state" =~ ^[yY] ]] || { echo "Left off."; return 0; }
+    fi
+  fi
+  mkdir -p "$(dirname "$file")"
+  { grep -vxF -e "$id" -e "!$id" "$file" 2>/dev/null || true
+    if [ "$sub" = on ]; then echo "$id"; else echo "!$id"; fi; } >"$file.tmp" && mv -f "$file.tmp" "$file"
+  if [ "$sub" = on ]; then echo "$id: on for typed questions"; else echo "$id: off"; fi
+  systemctl --user try-restart friday-linux-daemon.service 2>/dev/null || true
 }
 
 # Whether an action can't be taken back: it deletes, formats, runs as root,
@@ -6413,6 +6471,11 @@ $offer"
       # A standing task on its own (the daemon runs it with FRIDAY_STANDING=1).
       [ "${FRIDAY_STANDING:-}" = 1 ] && ctl_args+=(--scheduled)
       [ -z "$another" ] || ctl_args+=(--thorough --avoid "$another")
+      # Typed, with nothing added here: a public free tier may answer (LAI-6).
+      if [ "$request" = "$goal" ] && [ -z "${FRIDAY_SPOKEN:-}" ] && [ "${FRIDAY_STANDING:-}" != 1 ] \
+          && ! $use_followup && ! $use_selection && [ -z "${context:-}" ] && [ -z "${tab:-}" ]; then
+        ctl_args+=(--typed)
+      fi
       ctl_args+=("$request")
       stream_ctl friday-ctl "${ctl_args[@]}"
       # The final {outcome,result,error} object; keep every line of the answer.
@@ -6699,6 +6762,10 @@ $offer"
   screen-text)
     shift
     friday_screen_text "$@"
+    ;;
+  free-tiers)
+    shift
+    friday_free_tiers "$@"
     ;;
   feature|features)
     shift

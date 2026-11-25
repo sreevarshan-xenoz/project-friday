@@ -89,6 +89,10 @@ impl CommandGateway {
                 if cmd.params.get("scheduled").and_then(|v| v.as_bool()) == Some(true) {
                     payload["scheduled"] = json!(true);
                 }
+                // Typed with nothing added: may use a public free tier (LAI-6).
+                if cmd.params.get("typed").and_then(|v| v.as_bool()) == Some(true) {
+                    payload["typed"] = json!(true);
+                }
                 if let Some(avoid) = cmd.params.get("avoid").filter(|v| v.is_object()) {
                     payload["avoid"] = avoid.clone();
                 }
