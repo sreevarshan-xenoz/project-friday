@@ -3608,11 +3608,11 @@ friday_forget() {
     esac
   done
   local n_answers n_asks n_sent n_mem n_actions
-  n_actions=$(wc -l <"$state_dir/actions.jsonl" 2>/dev/null || true)
+  n_actions=$(wc -l 2>/dev/null <"$state_dir/actions.jsonl" || true)
   n_answers=$(cat "$state_dir/answers.1.md" "$state_dir/answers.md" 2>/dev/null | grep -c '^<!-- friday answer -->' || true)
-  n_asks=$(wc -l <"$state_dir/ask-history" 2>/dev/null || true)
-  n_sent=$(wc -l <"$state_dir/egress.jsonl" 2>/dev/null || true)
-  n_mem=$(wc -l <"$mem_dir/episodes.jsonl" 2>/dev/null || true)
+  n_asks=$(wc -l 2>/dev/null <"$state_dir/ask-history" || true)
+  n_sent=$(wc -l 2>/dev/null <"$state_dir/egress.jsonl" || true)
+  n_mem=$(wc -l 2>/dev/null <"$mem_dir/episodes.jsonl" || true)
   if [ -z "$what" ]; then
     echo "FRIDAY keeps this on your computer:"
     echo "  answers  ${n_answers:-0} saved answers, ${n_asks:-0} remembered questions, day summaries   ($state_dir)"

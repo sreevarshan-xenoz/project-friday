@@ -1159,6 +1159,9 @@ if grep -q "^friday-ctl" "$LOG"; then fail "the screen went out after Cancel"; e
 unset HYPR_WIN
 rm -f "$HOME/.config/friday/private-windows" "$S/hyprctl"; cp "$W/env.saved" "$envf"; mv "$W/curl.saved" "$S/curl"
 # `friday forget` shows counts, asks before deleting, and wipes only what was named.
+# With nothing kept yet, it says so without errors about missing files.
+err=$(HOME="$W/forget-empty" XDG_STATE_HOME="" XDG_CONFIG_HOME="" bash "$F" forget 2>&1 >/dev/null </dev/null)
+[ -z "$err" ] && pass "friday forget with nothing kept prints no errors" || fail "friday forget with nothing kept printed: $err"
 FD="$HOME/.local/state/friday"; mkdir -p "$FD/memory"
 printf '<!-- friday answer -->\n# q1\n\nA\n\n---\n\n<!-- friday answer -->\n# q2\n\nB\n\n---\n\n' >"$FD/answers.md"
 printf 'q2\nq1\n' >"$FD/ask-history"; printf '{"a":1}\n{"a":2}\n{"a":3}\n' >"$FD/egress.jsonl"
