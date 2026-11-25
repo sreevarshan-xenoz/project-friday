@@ -85,6 +85,9 @@ pub struct Row {
     pub correct: usize,
     pub median_ms: u64,
     pub failed: usize,
+    /// It said "too many requests" (a free tier's limit), so it wasn't
+    /// asked the rest: try again later.
+    pub rate_limited: bool,
 }
 
 impl Row {
@@ -125,8 +128,17 @@ where
         let mut correct = 0;
         let mut failed = 0;
         let mut latencies = Vec::with_capacity(CASES.len());
+        let mut rate_limited = false;
 
-        for case in &CASES {
+        for (i, case) in CASES.iter().enumerate() {
+            if rate_limited {
+                failed += 1;
+                continue;
+            }
+            // Paced, so a free tier's rate limit doesn't count as wrong answers.
+            if i > 0 && !cfg!(test) {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            }
             let prompt = case.prompt();
             match asker.ask(model, &prompt).await {
                 Ok((text, ms)) => {
@@ -140,7 +152,8 @@ where
                         correct += 1;
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    rate_limited = e.contains("429") || e.contains("Too Many Requests");
                     failed += 1;
                 }
             }
@@ -163,6 +176,7 @@ where
             correct,
             median_ms,
             failed,
+            rate_limited,
         });
     }
 
@@ -187,6 +201,7 @@ mod tests {
     use super::*;
 
     struct FakeAsk;
+    static LIMITED_ASKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
     #[async_trait]
     impl Ask for FakeAsk {
@@ -204,6 +219,10 @@ mod tests {
                 }
                 "wrong" => Ok(("totally wrong answer".to_string(), 50)),
                 "erroring" => Err("connection refused".to_string()),
+                "limited" => {
+                    LIMITED_ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Err("Provider x returned error status 429 Too Many Requests".to_string())
+                }
                 _ => unreachable!(),
             }
         }
@@ -241,5 +260,14 @@ mod tests {
         assert_eq!(rows[3].correct, 0);
         assert_eq!(rows[3].failed, 8);
         assert!(rows[3].unavailable());
+        assert!(!rows[3].rate_limited);
+    }
+
+    /// "Too many requests" once: not asked the rest, and said so.
+    #[tokio::test]
+    async fn a_rate_limited_model_is_asked_once() {
+        let rows = rank(&["limited".to_string()], FakeAsk).await;
+        assert_eq!(LIMITED_ASKED.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(rows[0].rate_limited && rows[0].unavailable());
     }
 }

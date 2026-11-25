@@ -766,18 +766,33 @@ async fn models(args: &[String]) -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     }
     let json = args.iter().any(|a| a == "--json");
+    // The keys the daemon reads (friday.env, which systemd hands it): this
+    // runs from a terminal, so read them here too. Plain KEY=value lines
+    // only, never run as a script; one already set in the environment wins.
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".config")));
+    if let Some(dir) = config {
+        let text = std::fs::read_to_string(dir.join("friday/friday.env")).unwrap_or_default();
+        for (k, v) in text.lines().filter_map(|l| l.split_once('=')) {
+            let k = k.trim();
+            if !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                && std::env::var_os(k).is_none()
+            {
+                std::env::set_var(k, v.trim().trim_matches('"'));
+            }
+        }
+        friday_mobile::secrets::resolve_env();
+    }
 
-    let state_path = if let Ok(p) = std::env::var("FRIDAY_STATE_FILE") {
-        std::path::PathBuf::from(p)
-    } else {
-        ShellState::default_path()
-    };
-    let fabric_dir = state_path
-        .parent()
-        .map(|d| d.join("fabric"))
-        .unwrap_or_else(|| std::path::PathBuf::from(".fabric"));
+    // A folder of its own for provider health and timings: a benchmark's
+    // slow or refused answers must never change how FRIDAY routes your asks.
+    let fabric_dir = std::env::temp_dir().join(format!("friday-rank-{}", std::process::id()));
     let mut fabric = friday_intelligence::InferenceFabric::default_from_env_in(&fabric_dir);
-    fabric.request_timeout = Some(std::time::Duration::from_secs(15));
+    // A vision model on a free tier can be slow: the screen ask's own limit.
+    fabric.request_timeout = Some(std::time::Duration::from_secs(45));
     fabric.screen_request_timeout = Some(std::time::Duration::from_secs(45));
 
     let needs_vision = friday_intelligence::RequestRequirements {
@@ -917,6 +932,7 @@ async fn models(args: &[String]) -> std::process::ExitCode {
                     "median_ms": r.median_ms,
                     "median_s": (r.median_ms as f64) / 1000.0,
                     "failed": r.failed,
+                    "rate_limited": r.rate_limited,
                     "unavailable": r.unavailable(),
                 })
             })
@@ -933,7 +949,9 @@ async fn models(args: &[String]) -> std::process::ExitCode {
     for (i, r) in rows.iter().enumerate() {
         let rank_str = format!("{}", i + 1);
         let correct_str = format!("{}/8", r.correct);
-        let median_str = if r.unavailable() {
+        let median_str = if r.rate_limited && r.correct == 0 {
+            "rate limited".to_string()
+        } else if r.unavailable() {
             "unavailable".to_string()
         } else {
             format!("{:.2}s", (r.median_ms as f64) / 1000.0)
@@ -944,15 +962,17 @@ async fn models(args: &[String]) -> std::process::ExitCode {
         );
     }
 
-    if let Some(best) = rows
-        .iter()
-        .find(|r| !r.unavailable())
-        .or_else(|| rows.first())
-    {
-        println!(
+    let _ = std::fs::remove_dir_all(&fabric_dir);
+    if rows.iter().any(|r| r.rate_limited) {
+        println!("\n\"rate limited\": that provider said too many requests (free tiers cap how often you ask); try again later.");
+    }
+    // Only a model that answered something right is worth recommending.
+    match rows.iter().find(|r| !r.unavailable() && r.correct > 0) {
+        Some(best) => println!(
             "\nUse the best for screen asks: friday model screen {}",
             best.model
-        );
+        ),
+        None => println!("\nNo model answered these questions right now; nothing to recommend."),
     }
 
     std::process::ExitCode::SUCCESS
