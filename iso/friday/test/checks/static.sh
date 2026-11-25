@@ -65,12 +65,24 @@ if need Hyprland && [ "${unpriv[0]:-}" != false ]; then
   done
 else skip "Hyprland config verification (needs Hyprland)"; fi
 
+echo "FRIDAY Shell can be used with a screen reader"
+# Whatever takes keyboard focus says what it is; an icon-only button says
+# what it does (its tooltip is its name).
+nameless=""
+while IFS= read -r f; do grep -q 'Accessible.role' "$f" || nameless+="${f#"$REPO_ROOT"/} "; done \
+  < <(grep -rl 'activeFocusOnTab: true' "$REPO_ROOT/packaging/linux/shell")
+[ -z "$nameless" ] && pass "every focusable control has an accessible role" || fail "no Accessible.role in: $nameless"
+unnamed=$(grep -rn -A8 'IconButton {' "$REPO_ROOT/packaging/linux/shell" --include='*.qml' \
+  | awk '/IconButton \{/ { if (n) print at; at = $0; n = 1; if ($0 ~ /tooltip:/) n = 0; next } /tooltip:/ { n = 0 } /^--$/ { if (n) print at; n = 0 } END { if (n) print at }' \
+  | grep -v 'components/IconButton.qml' || true)
+[ -z "$unnamed" ] && pass "every icon button has a name" || fail "icon buttons with no tooltip (name): $unnamed"
+
 echo "FRIDAY Shell's look reaches Hyprland"
 F_CLI="$REPO_ROOT/packaging/linux/friday"
 THEME_QML="$REPO_ROOT/packaging/linux/shell/common/Theme.qml"
 # The window borders use the palettes' accent and outline: the CLI's copy of
 # them must match Theme.qml.
-for pal in core ember polar frost moss dawn; do
+for pal in core ember polar frost moss dawn contrast; do
   block=$(sed -n "/readonly property var $pal: ({/,/})/p" "$THEME_QML")
   acc=$(grep -oE 'accent: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
   out=$(grep -oE 'outline: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')

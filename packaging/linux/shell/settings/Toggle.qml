@@ -49,6 +49,13 @@ ColumnLayout {
       border.width: activeFocus ? 2 : 0
       border.color: Theme.text
       activeFocusOnTab: true
+      Accessible.role: Accessible.CheckBox
+      Accessible.checkable: true
+      Accessible.checked: root.checked
+      Accessible.name: root.title
+      Accessible.description: root.detail
+      Accessible.onToggleAction: root.flip()
+      Accessible.onPressAction: root.flip()
       Keys.onReturnPressed: root.flip()
       Keys.onEnterPressed: root.flip()
       Keys.onSpacePressed: root.flip()

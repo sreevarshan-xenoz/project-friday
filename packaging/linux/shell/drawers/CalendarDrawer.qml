@@ -60,8 +60,8 @@ FocusScope {
         color: root.offset === 0 ? Theme.text : Theme.accent
         MouseArea { anchors.fill: parent; onClicked: root.offset = 0 }
       }
-      IconButton { icon: Icons.chevronLeft; size: 28; onClicked: root.offset-- }
-      IconButton { icon: Icons.chevronRight; size: 28; onClicked: root.offset++ }
+      IconButton { tooltip: "Previous month"; icon: Icons.chevronLeft; size: 28; onClicked: root.offset-- }
+      IconButton { tooltip: "Next month"; icon: Icons.chevronRight; size: 28; onClicked: root.offset++ }
     }
 
     GridLayout {

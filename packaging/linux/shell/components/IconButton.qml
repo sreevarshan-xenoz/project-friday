@@ -16,6 +16,10 @@ Item {
   implicitWidth: size
   implicitHeight: size
   activeFocusOnTab: true
+  // What a screen reader says, and pressing it from one.
+  Accessible.role: Accessible.Button
+  Accessible.name: root.tooltip
+  Accessible.onPressAction: root.clicked()
   Keys.onReturnPressed: root.clicked()
   Keys.onEnterPressed: root.clicked()
   Keys.onSpacePressed: root.clicked()

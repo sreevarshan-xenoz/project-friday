@@ -45,6 +45,10 @@ FloatingWindow {
             border.width: activeFocus ? 2 : 0
             border.color: Theme.accent
             activeFocusOnTab: true
+            Accessible.role: Accessible.PageTab
+            Accessible.name: modelData + " page"
+            Accessible.selected: Settings.page === modelData
+            Accessible.onPressAction: Settings.page = modelData
             Keys.onReturnPressed: Settings.page = modelData
             Keys.onEnterPressed: Settings.page = modelData
             Keys.onSpacePressed: Settings.page = modelData

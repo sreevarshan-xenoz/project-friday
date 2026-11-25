@@ -19,6 +19,13 @@ Rectangle {
   border.width: activeFocus ? 2 : 1
   border.color: activeFocus ? Theme.text : on ? Theme.alpha(Theme.accent, 0.55) : "transparent"
   activeFocusOnTab: true
+  // What a screen reader says, and pressing it from one.
+  Accessible.role: Accessible.Button
+  Accessible.checkable: true
+  Accessible.checked: root.on
+  Accessible.name: root.title
+  Accessible.description: root.status
+  Accessible.onPressAction: root.clicked()
   Keys.onReturnPressed: root.clicked()
   Keys.onEnterPressed: root.clicked()
   Keys.onSpacePressed: root.clicked()

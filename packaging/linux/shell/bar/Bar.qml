@@ -79,6 +79,7 @@ PanelWindow {
     spacing: 10
 
     IconButton {
+      tooltip: "Apps"
       icon: Icons.apps
       size: 26
       iconSize: 16
@@ -163,6 +164,7 @@ PanelWindow {
       onClicked: Shell.toggle("control", bar.modelData.name)
     }
     IconButton {
+      tooltip: "Power and session"
       icon: Icons.power
       size: 26
       iconSize: 15

@@ -72,6 +72,7 @@ Rectangle {
         color: root.fromFriday ? Theme.accent : Theme.subtext
       }
       IconButton {
+        tooltip: "Copy"
         visible: root.fromFriday && root.notification && root.notification.body !== ""
         icon: Icons.copy
         size: 22
@@ -79,6 +80,7 @@ Rectangle {
         onClicked: Friday.copy(root.notification.body)
       }
       IconButton {
+        tooltip: "Dismiss"
         icon: Icons.close
         size: 22
         iconSize: 13

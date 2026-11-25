@@ -154,7 +154,7 @@ Desktop & System Substrate:
   friday shell <drawer>            Toggle a drawer: friday control calendar launcher session
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
   friday shell style [name]        Shell style: ember, lean, island, dock (lists without a name)
-  friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, classic
+  friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
   friday theme [list|set <name>]   Switch desktop visual theme (22 available)
   friday bar [toggle|reload]       Configure Quickshell bar and widgets
   friday update                    Update system and OS components
@@ -203,6 +203,7 @@ shell_window_look() {
     frost)   accent=7cc4ff outline=2c3a4d ;;
     moss)    accent=a8d46f outline=323b2d ;;
     dawn)    accent=d9622b outline=d2c7ba ;;
+    contrast) accent=ffd60a outline=ffffff ;;
     classic|omarchy) accent="" outline="" ;;
     *)       palette=core accent=d42d51 outline=343842 ;;
   esac
@@ -6684,7 +6685,7 @@ $offer"
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
         key=$1; shift
-        if [ "$key" = style ]; then opts="ember lean island dock"; else opts="core ember polar frost moss dawn classic"; fi
+        if [ "$key" = style ]; then opts="ember lean island dock"; else opts="core ember polar frost moss dawn contrast classic"; fi
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
         cur=$(jq -r --arg k "$key" '.[$k] // empty' "$conf" 2>/dev/null || true)
         [ "$cur" = friday ] && cur=ember
