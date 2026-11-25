@@ -137,6 +137,10 @@ To stop FRIDAY talking, press the talk key or close the answer (Esc). On Linux, 
 
 Asking something new while an answer is still on its way replaces it: the newest question wins (on Windows the old one is stopped; on Linux its answer is still kept in `friday answers`, just not shown or read out).
 
+## Notes of a call (Linux)
+
+`friday meeting start` transcribes what the computer plays (the other people on a call) here with whisper, as captions do; nothing of the audio leaves. `friday meeting stop` turns it into decisions, to-dos and open questions: with a local model nothing is sent, otherwise the transcript's text goes to your AI provider after you say yes. They're kept as the project's thoughts and with your answers, named by the hour ("Notes from the 3pm call"), so `friday answers search 3pm call` or asking "what did we decide in the 3pm call?" finds them. `friday feature meeting-notes off` stops keeping them with the answers.
+
 ## Spoken answers (FRIDAY OS)
 
 FRIDAY can read its answers out loud in a small voice that is made on your computer: nothing is sent
