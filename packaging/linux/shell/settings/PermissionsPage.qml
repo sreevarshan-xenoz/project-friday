@@ -95,7 +95,7 @@ ColumnLayout {
       spacing: 10
       Label {
         Layout.fillWidth: true
-        text: "Pocketdesk lets your phone see and control this computer, and answer FRIDAY's questions. Turning it on starts its server in your session (it starts at every sign-in until you turn it off here). Only phones you pair with a PIN shown here can connect."
+        text: "FRIDAY Mobile lets your phone see and control this computer, and answer FRIDAY's questions. Turning it on starts its server in your session (it starts at every sign-in until you turn it off here). Only phones you pair with a PIN shown here can connect."
         wrapMode: Text.Wrap
         elide: Text.ElideNone
       }

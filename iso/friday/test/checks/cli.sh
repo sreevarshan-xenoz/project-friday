@@ -1826,6 +1826,12 @@ printf '# q\n\nAnother answer.\n' >"$state/last-answer.md"
 contains "\"send the answer to my phone\" sends the answer before it" "$(cat "$W/pd-sent.md")" "Another answer."
 if grep -q "^friday-ctl" "$LOG"; then fail "sending to the phone asked the AI"; else pass "sending to the phone asks no AI"; fi
 contains "Pocketdesk not running: says how to start it" "$(PD_RC=3 PATH="$W/pd-bin:$PATH" bash "$F" phone send)" "friday phone on starts it"
+# FRIDAY Mobile, when installed, is the one used, even with Pocketdesk there too.
+mkdir -p "$W/fm-bin"; printf '#!/bin/bash\necho "friday-mobile $*" >>%q\nexit ${PD_RC:-0}\n' "$LOG" >"$W/fm-bin/friday-mobile"; chmod +x "$W/fm-bin/friday-mobile"
+: >"$LOG"; PATH="$W/fm-bin:$W/pd-bin:$PATH" bash "$F" phone send >/dev/null
+contains "with FRIDAY Mobile installed, it sends through FRIDAY Mobile" "$(cat "$LOG")" "friday-mobile send-to-phone"
+if grep -q "^pocketdesk" "$LOG"; then fail "Pocketdesk was used beside FRIDAY Mobile"; else pass "and not through Pocketdesk"; fi
+contains "and names FRIDAY Mobile when it isn't running" "$(PD_RC=3 PATH="$W/fm-bin:$W/pd-bin:$PATH" bash "$F" phone send)" "FRIDAY Mobile isn't running"
 # The whole conversation, to pick up on the phone.
 : >"$LOG"; out=$(PATH="$W/pd-bin:$PATH" bash "$F" phone send thread)
 contains "phone send thread sends the conversation" "$(cat "$W/pd-sent.md")" "**You:** what is rust"
@@ -2275,7 +2281,7 @@ contains "phone on asks first and declining changes nothing" "$(printf 'n\n' | P
 rm -f "$CS/pocketdesk"
 # A confirmation goes to the screen and, with a paired phone set to answer, the
 # phone too: the first answer wins; no answer is a cancel.
-eval "$(sed -n '/^friday_confirm_pending() {/p;/^friday_confirm() {/,/^}/p' "$F")"
+eval "$(sed -n '/^friday_confirm_pending() {/p;/^friday_phone_app() {/,/^}/p;/^friday_confirm() {/,/^}/p' "$F")"
 cat >"$CS/notify-send" <<'EOF2'
 #!/bin/sh
 # NS_ANSWER after NS_DELAY seconds, as a clicked action prints its key.

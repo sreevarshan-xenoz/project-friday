@@ -6,7 +6,7 @@ import Quickshell.Io
 
 // The first-login tour: a few steps that ask you to press FRIDAY's keys
 // rather than read about them. `friday welcome` starts it once:
-//   qs ipc call tour begin <name> <onFreeModels> <pocketdeskInstalled>
+//   qs ipc call tour begin <name> <onFreeModels> <phoneAppInstalled>
 // The first steps move on by themselves when an answer arrives.
 Singleton {
   id: root
@@ -62,7 +62,7 @@ Singleton {
   ]).concat(root.phone ? [
     { title: "Your phone",
       keys: "",
-      body: "Pocketdesk shows this computer on your phone and lets it answer FRIDAY's questions. Pairing shows a PIN to type on the phone.",
+      body: "FRIDAY Mobile shows this computer on your phone and lets it answer FRIDAY's questions. Pairing shows a PIN to type on the phone.",
       action: { label: "Pair my phone", command: "friday phone on" },
       waits: false }
   ] : [])).filter(s => !s.bundles || root.bundles)

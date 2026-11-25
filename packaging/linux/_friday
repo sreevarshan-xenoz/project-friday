@@ -31,7 +31,7 @@ _friday() {
     'face:Face unlock for the lock screen'
     'voice:Hold Super+Y and speak'
     'screen-text:Ask about the screen with the window text, not a screenshot'
-    'phone:Pair a phone with Pocketdesk'
+    'phone:Pair a phone with FRIDAY Mobile'
     'helper:System helper for package updates and installs'
     'welcome:Show the first-login greeting again'
     'app:Open FRIDAY Settings'
