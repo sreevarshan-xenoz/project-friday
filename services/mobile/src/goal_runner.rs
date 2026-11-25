@@ -2589,10 +2589,11 @@ impl GoalRunner {
             goal_id: Some(id.clone()),
             masked: Some(masked_count),
         };
-        friday_intelligence::with_egress_context(
+        // Public free tiers stay out unless the ask opens this gate (LAI-6).
+        friday_intelligence::public_tier_gate(friday_intelligence::with_egress_context(
             egress_ctx,
             self.run_goal_inner(goal, id, masked_count, session_id, confirm, opts),
-        )
+        ))
         .await;
     }
 
@@ -2994,6 +2995,15 @@ impl GoalRunner {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 };
+                // A public free tier may write this answer only when the
+                // answer prompt is the bare typed question: no tool output,
+                // evidence or web results were added to it (LAI-6 guard).
+                if may_use_public_tiers(&opts, &goal, &composed, masked_count)
+                    && answer_prompt(&composed, &report, web_response.as_ref())
+                        == answer_prompt(&composed, &ExecutiveReport::default(), None)
+                {
+                    friday_intelligence::open_public_tier_gate();
+                }
                 let composing = compose_answer(
                     answerer.as_ref(),
                     &composed,
@@ -3500,6 +3510,9 @@ pub struct AskOptions {
     pub avoid: Option<(String, String)>,
     /// A standing task asked it, on its own.
     pub scheduled: bool,
+    /// Typed by the person with nothing added by the host (no selection,
+    /// screen, page, docs, recall or follow-up); not spoken, not scheduled.
+    pub typed: bool,
 }
 
 impl AskOptions {
@@ -3519,8 +3532,25 @@ impl AskOptions {
             thorough: flag("thorough"),
             avoid,
             scheduled: flag("scheduled"),
+            typed: flag("typed"),
         }
     }
+}
+
+/// Whether this ask may use the public free tiers the person turned on
+/// (LAI-6): only a question the host marked as typed, with nothing added to
+/// it here either (no earlier turns, memory, about-me line or timeline), no
+/// secret masked out of it, and private mode off. (The `free-tiers` and
+/// `free-tiers-everywhere` switches are the fabric's to check.)
+fn may_use_public_tiers(opts: &AskOptions, goal: &str, composed: &str, masked: usize) -> bool {
+    opts.typed
+        && !opts.scheduled
+        && masked == 0
+        && composed == goal
+        && !carries_quoted_text(goal)
+        && !goal.contains("\n\n[")
+        && !std::env::var("FRIDAY_PRIVATE")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
 /// Put first in a thorough answer's prompt.
@@ -3961,6 +3991,56 @@ mod tests {
         // Half an `avoid` is no `avoid`.
         let o = AskOptions::from_payload(&json!({ "avoid": { "provider": "kilo" } }));
         assert_eq!(o.avoid, None);
+    }
+
+    /// LAI-6: only a question marked typed, with nothing added anywhere,
+    /// may reach a public free tier; everything else keeps the gate shut.
+    #[test]
+    fn only_a_plain_typed_question_opens_the_public_tier_gate() {
+        let typed = AskOptions {
+            typed: true,
+            ..Default::default()
+        };
+        let q = "what is the capital of peru?";
+        let usable = !std::env::var("FRIDAY_PRIVATE").is_ok_and(|v| v == "1" || v == "true");
+        assert_eq!(may_use_public_tiers(&typed, q, q, 0), usable);
+        // Not marked typed: a spoken ask, the tray without the flag, a script.
+        assert!(!may_use_public_tiers(&AskOptions::default(), q, q, 0));
+        // A standing task.
+        let sched = AskOptions {
+            typed: true,
+            scheduled: true,
+            ..Default::default()
+        };
+        assert!(!may_use_public_tiers(&sched, q, q, 0));
+        // The daemon added earlier turns, memory or the about-me line.
+        let composed = format!("{q}\n\n[memory]\nmy address is ...");
+        assert!(!may_use_public_tiers(&typed, q, &composed, 0));
+        // A secret was masked out of it.
+        assert!(!may_use_public_tiers(&typed, q, q, 1));
+        // The host attached something but still sent the flag.
+        for added in [
+            "\n\n[follow-up]\nprior answer",
+            "\n\n[recall]\nscreen text",
+            "\n\n[window in front when asked]\nkeepassxc",
+            "\n\n[page]\ntext",
+            "\n\nUse this text as context:\n\"\"\"\nselected\n\"\"\"",
+        ] {
+            let g = format!("{q}{added}");
+            assert!(!may_use_public_tiers(&typed, &g, &g, 0), "{added}");
+        }
+        assert!(AskOptions::from_payload(&json!({ "typed": true })).typed);
+        // At the answer step the gate also needs a bare prompt: a tool's
+        // output (git status, a file listing) makes it differ, so it stays shut.
+        let bare = answer_prompt(q, &ExecutiveReport::default(), None);
+        let ran = ExecutiveReport {
+            result: Some(
+                GoalResult::from_tool_result(&ToolResult::success("M secret-plan.md"))
+                    .with_tool("terminal"),
+            ),
+            ..Default::default()
+        };
+        assert_ne!(answer_prompt(q, &ran, None), bare);
     }
 
     /// Streams its reply in words, with pauses longer than the progress

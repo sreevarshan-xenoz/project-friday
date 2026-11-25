@@ -21,13 +21,14 @@ pub use egress::{
 pub use parser::{LlmResponse, ParsedTask, ResponseInterpreter};
 pub use planner_backend::InferenceBackend;
 pub use providers::{
-    classify_failure_reason, http_client, http_client_builder, opengateway_models,
-    sanitize_candidate_error, CandidateConsideration, CandidateFailure, CapabilityTier,
-    CircuitBreaker, CircuitState, CompletionChunk, EmbeddingResult, InferenceFabric,
-    MockModelClient, ModelCapability, ModelClient, ModelDescriptor, ModelInfo, OmniRouteProvider,
-    OmniRouteProviderV2, OpenAiProvider, PersistedProviderHealth, Provider, ProviderCapabilities,
-    ProviderMetadata, ProviderV2, ProviderV2Adapter, RoutingDecision, RoutingMode,
-    HTTP_CONNECT_TIMEOUT,
+    classify_failure_reason, http_client, http_client_builder, open_public_tier_gate,
+    opengateway_models, public_tier_gate, public_tiers_from_config, sanitize_candidate_error,
+    CandidateConsideration, CandidateFailure, CapabilityTier, CircuitBreaker, CircuitState,
+    CompletionChunk, EmbeddingResult, InferenceFabric, MockModelClient, ModelCapability,
+    ModelClient, ModelDescriptor, ModelInfo, OmniRouteProvider, OmniRouteProviderV2,
+    OpenAiProvider, PersistedProviderHealth, Provider, ProviderCapabilities, ProviderMetadata,
+    ProviderV2, ProviderV2Adapter, RoutingDecision, RoutingMode, HTTP_CONNECT_TIMEOUT,
+    PUBLIC_TIER_PROVIDERS,
 };
 pub use qualification::{
     routing_score, BenchmarkConfig, Budget, CandidateView, Preference, ProviderHealth,

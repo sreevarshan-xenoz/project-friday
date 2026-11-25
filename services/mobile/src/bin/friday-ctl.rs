@@ -2401,6 +2401,10 @@ async fn main() -> std::process::ExitCode {
             // A standing task asking on its own: only what can be undone runs.
             ask_opts.insert("scheduled".into(), serde_json::json!(true));
             i += 1;
+        } else if w == "--typed" {
+            // Typed with nothing added: a public free tier may answer (LAI-6).
+            ask_opts.insert("typed".into(), serde_json::json!(true));
+            i += 1;
         } else if w == "--new-conversation" {
             new_conversation = true;
             i += 1;
