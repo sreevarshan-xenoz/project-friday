@@ -1,4 +1,23 @@
-# FRIDAY
+<p align="center">
+  <img src="packaging/linux/brand/friday.svg" alt="" width="112">
+</p>
+
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="packaging/linux/brand/friday-wordmark.svg">
+    <img src="packaging/linux/brand/friday-wordmark-dark.svg" alt="FRIDAY" width="360">
+  </picture>
+</h1>
+
+<p align="center"><b>Press a key, ask about what's on your screen, get an answer or an action.</b><br>
+A desktop assistant for Linux and Windows, free models out of the box, your data where you say.</p>
+
+<p align="center">
+  <a href="https://github.com/sreevarshan-xenoz/project-friday/releases/latest"><img src="https://img.shields.io/github/v/release/sreevarshan-xenoz/project-friday?label=release&color=D42D51" alt="Latest release"></a>
+  <a href="https://github.com/sreevarshan-xenoz/project-friday/actions/workflows/ci.yml"><img src="https://github.com/sreevarshan-xenoz/project-friday/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI"></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/Linux%20%C2%B7%20Windows-111318" alt="Linux and Windows"></a>
+  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-111318" alt="License: MIT OR Apache-2.0"></a>
+</p>
 
 A standalone desktop assistant for Windows and Linux: one Rust core, a thin host per platform, installable on an existing machine. FRIDAY OS (the Arch ISO) is the reference Linux setup, not the only way in.
 
@@ -24,6 +43,9 @@ New here? [Using FRIDAY](docs/USING.md) is the short tour: the keys, the answer 
 - **Remembers your work, if you want it to**: recall of what you looked at (3 hours to 7 days, local), meeting notes as project thoughts, your own folders searchable, and encrypted sync between your machines.
 - **The page you're on**, through FRIDAY's browser extension instead of a screenshot.
 - **A settings app on each platform** for people who don't use a terminal ([the pages](docs/SETTINGS-PAGES.md)), and a first-login tour (a welcome window on Windows).
+- **You see what it remembers**: an answer lists the remembered facts that shaped it, each with Forget, and forgetting one removes every copy of it.
+- **Tools and agents that ask first**: tools from MCP servers you switch on, and coding agents (Claude Code, Codex, opencode, Antigravity) supervised by fixed rules, each step asked before it runs.
+- **Its own look**: the aperture-F mark and the Core palette (obsidian and red) across FRIDAY Shell, the Windows tray, the boot splash and the login, with the other palettes a switch away.
 - **Private by default where it counts**: free models are the starting point and are labelled as such; your own key, an account you already have, or a local model are one click away; a log shows what left the machine.
 
 ## How it fits together
