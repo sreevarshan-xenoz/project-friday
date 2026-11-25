@@ -360,6 +360,15 @@ contains "it says on screen (fd 3) how to get it later" "$out" "yay -S zen-brows
 contains "the other one is still installed" "$out" "Installed brave-bin from the AUR."
 contains "mimeapps.list without a final newline still gets the header" "$(cat "$W/mnt/home/alice/.config/mimeapps.list")" $'x=1\n[Default Applications]'
 
+echo "FRIDAY's orb while the installer waits"
+orb_frames=$(bash -c 'source "$1"; for k in 0 1 2 3; do friday_orb $k; echo "--"; done' _ "$REPO_ROOT/iso/friday/airootfs/root/friday-tui.sh" 2>/dev/null)
+[[ "$(grep -c '^--$' <<<"$orb_frames")" == 4 && "$(grep -vc '^--$' <<<"$orb_frames")" == 28 ]] \
+  && pass "four frames of seven lines" || fail "the orb's frames: $(head -3 <<<"$orb_frames")"
+LC_ALL=C grep -q '[^ -~]' <<<"$orb_frames" && fail "the orb uses characters the console font lacks" || pass "the orb is plain ASCII, for the console font"
+[[ "$(bash -c 'source "$1"; friday_orb 0' _ "$REPO_ROOT/iso/friday/airootfs/root/friday-tui.sh")" != "$(bash -c 'source "$1"; friday_orb 2' _ "$REPO_ROOT/iso/friday/airootfs/root/friday-tui.sh")" ]] \
+  && pass "the frames differ (it moves)" || fail "the orb doesn't move"
+grep -q 'friday.nomotion' "$REPO_ROOT/iso/friday/airootfs/root/installer" && pass "friday.nomotion on the boot line stops it" || fail "no way to stop the orb"
+
 echo "installer progress and failure screens"
 if need gum python3; then
   W="$WORK/progress"; mkdir -p "$W"

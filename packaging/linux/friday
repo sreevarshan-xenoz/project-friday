@@ -81,6 +81,7 @@ Autonomous Agent & Cognitive Loop:
   friday retention                 How long each kind of record FRIDAY keeps stays
   friday day [today|yesterday|YYYY-MM-DD|forget <date|all>]  A short summary of a day by project, kept here
   friday dictations [copy <n>|clear]  The last 20 voice-typed texts, to get one back
+  friday sounds [on|off]           Quiet sounds for listening, an answer done, one that failed
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday model [ask|screen|chores] [provider/model|auto]  The model each job tries first
@@ -1186,6 +1187,30 @@ friday_conversation_end() {
   return 1
 }
 # friday_chime: the short sound that means "FRIDAY is listening now".
+# Soft state sounds (friday sounds on; off unless turned on): the desktop's
+# own quiet cues for listening, an answer done, and one that failed.
+friday_sounds_flag() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/sounds"; }
+friday_cue() { # listening|done|failed
+  [ -e "$(friday_sounds_flag)" ] && friday_feature_on state-sounds || return 0
+  local name
+  case "$1" in
+    listening) name=message ;;
+    done) name=complete ;;
+    failed) name=dialog-error ;;
+    *) return 0 ;;
+  esac
+  local f="${FRIDAY_SOUNDS_DIR:-/usr/share/sounds/freedesktop/stereo}/$name.oga"
+  [ -f "$f" ] && command -v pw-play >/dev/null 2>&1 || return 0
+  ( timeout 3 pw-play --volume 0.5 "$f" >/dev/null 2>&1 & ) || true
+}
+friday_sounds() { # [on|off|status]
+  case "${1:-status}" in
+    on) mkdir -p "$(dirname "$(friday_sounds_flag)")"; : >"$(friday_sounds_flag)"; echo "Sounds: on (listening, done, failed)."; friday_cue done ;;
+    off) rm -f "$(friday_sounds_flag)"; echo "Sounds: off." ;;
+    status) if [ -e "$(friday_sounds_flag)" ]; then echo "Sounds: on"; else echo "Sounds: off (friday sounds on)"; fi ;;
+    *) echo "Usage: friday sounds [on|off|status]" >&2; return 2 ;;
+  esac
+}
 friday_chime() {
   local f=/usr/share/sounds/freedesktop/stereo/message.oga
   [ -f "$f" ] && command -v pw-play >/dev/null 2>&1 && timeout 3 pw-play "$f" >/dev/null 2>&1 || true
@@ -1546,7 +1571,16 @@ friday_undo() {
 # when FRIDAY can't see inside that app, or nothing fits.
 friday_show() {
   command -v friday-ctl >/dev/null 2>&1 && command -v hyprctl >/dev/null 2>&1 || return 1
-  local out names app request reply pick
+  local out names app request reply pick class
+  # A web page: FRIDAY's browser extension outlines the thing on the page
+  # itself (never in a private window: the extension isn't let in there).
+  class=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.class // ""' 2>/dev/null || true)
+  if [[ "${class,,}" =~ (chromium|chrome|brave|firefox|zen|vivaldi|librewolf) ]] && [ -z "$(friday_private_window)" ]; then
+    out=$(timeout 10 friday-ctl browser find "$1" 2>/dev/null) && return 0
+    # The browser said the tab is private (its own check, which also knows
+    # windows the title doesn't show): nothing of it goes anywhere else.
+    [ "$(jq -r '.error // empty' <<<"$out" 2>/dev/null)" = "no tab FRIDAY may read" ] && return 1
+  fi
   out=$(timeout 20 friday-ctl show "$1" 2>/dev/null) || return 1
   if [ "$(jq -r '.found' <<<"$out" 2>/dev/null)" != true ]; then
     names=$(jq -r '(.controls // []) | join("\n")' <<<"$out" 2>/dev/null || true)
@@ -2580,6 +2614,7 @@ friday_hold() {
         if [ "${2:-}" = "--type" ]; then timeout 2 hyprctl activewindow -j >"$d/typewin" 2>/dev/null || : >"$d/typewin"; fi
         if [ "$mode" = "--type" ] && [ -e "$d/latched" ]; then pill dictatingLatched || true
         elif [ "$mode" = "--type" ]; then pill dictating || true; else pill listening || true; fi
+        friday_cue listening
         timeout "$most" pw-record --rate 16000 --channels 1 --format s16 "$d/rec.wav" &
         echo $! >"$d/rec.pid"
         [ "$(cat "$d/pressed" 2>/dev/null)" = "$token" ] || kill -TERM $! 2>/dev/null
@@ -3608,9 +3643,22 @@ friday_memory() {
       [ -n "$words" ] || { echo "usage: friday memory forget <words in the line>" >&2; return 2; }
       # Only its "- " lines: headings and notes in the file are yours.
       n=$(awk -v w="${words,,}" '/^- / && index(tolower($0), w) { n++ } END { print n + 0 }' "$f" 2>/dev/null || echo 0)
-      [ "${n:-0}" -gt 0 ] || { echo "No line of $f has \"$words\"."; return 1; }
-      awk -v w="${words,,}" '!(/^- / && index(tolower($0), w))' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
-      echo "Forgot $n line(s) with \"$words\"." ;;
+      if [ "${n:-0}" -gt 0 ]; then
+        awk -v w="${words,,}" '!(/^- / && index(tolower($0), w))' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
+        echo "Forgot $n line(s) with \"$words\"."
+      else
+        echo "No line of $f has \"$words\"."
+      fi
+      # And every copy of it: the journal, conversations, day summaries,
+      # screen recall, answers. The daemon holds some of them, so it stops
+      # while they change.
+      friday_feature_on forget-everywhere || { [ "${n:-0}" -gt 0 ]; return; }
+      local was_up=false
+      if systemctl --user is-active --quiet friday-linux-daemon 2>/dev/null; then
+        was_up=true; systemctl --user stop friday-linux-daemon 2>/dev/null || true
+      fi
+      friday-ctl forget-everywhere --daemon-stopped "$words" || true
+      if $was_up; then systemctl --user start friday-linux-daemon 2>/dev/null || true; fi ;;
     import)
       # Another assistant's notes (a CLAUDE.md, an exported memory list):
       # a preview of what would be added, then --apply adds it.
@@ -4071,6 +4119,7 @@ friday_local_ai_bench() {
 # FRIDAY Settings → Features). All are on until switched off; the ones off
 # are listed, one a line, in features-off in FRIDAY's config folder.
 FRIDAY_FEATURES="instant-answers|Arithmetic and unit conversions worked out here at once
+motion|FRIDAY Shell's animations: the answer card, drawers and the pulsing orb (off: everything changes at once)
 what-works|When FRIDAY is offline, say so and what still works
 app-instructions|Your instructions for each app go with asks from it
 mentions|@screen, @tab, @clip, @web and @file in a question
@@ -4099,6 +4148,7 @@ speak-as-it-comes|Spoken answers start with the first sentence while the rest is
 voice-preview|friday voice preview on: what whisper heard opens in the ask box to edit or drop before it is used
 health-page|friday health: each part of FRIDAY, whether it works here, and its switches
 voice-try|friday voice speak try [N]: hear a voice, or each in turn, before choosing; the choice stays
+state-sounds|With friday sounds on: quiet cues for listening, an answer done and one that failed
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
@@ -4107,6 +4157,8 @@ tree-trim|A window's text leaves out what isn't on screen, collapsed menus' item
 tree-trim|A window's text leaves out what the app marks hidden, collapsed menus' items, repeated controls and icon glyphs, so asks are smaller
 point-ask|friday ask --point: click one control and ask about it; only it, what it sits in and its neighbours go, as text
 retention|Finished agent runs, the agent hooks log and wrong-answer reports go after 30 days (friday-ctl retention shows every rule)
+screen-quote|An answer about a window ends with the exact line it relied on (From the screen: ...), checked against what was sent
+forget-everywhere|friday memory forget also removes every copy: the journal, conversations, day summaries, screen recall and answers (your thoughts stay)
 screen-what-changed|What changed? about the same window sends only the lines that changed since the last screen ask (kept in memory 30 minutes)
 agent-compare|Two agents on the same task, each in its own copy, then friday agents compare to pick one
 backup-new-home|A backup restored on another computer points saved folders (workspaces, threads, settings) at the new home
@@ -5201,17 +5253,22 @@ case "${1:-}" in
     # @clip (the clipboard), @web (a web search), @file <path> (a text file's
     # contents). Each is taken out of the question.
     mention_file=""
-    while friday_feature_on mentions && [[ "$goal" =~ (^|[[:space:]])@(screen|tab|clip|web|file[[:space:]]+([^[:space:]]+))([[:space:]]|$) ]]; do
+    # A path with spaces goes in double quotes: @file "My notes.pdf".
+    while friday_feature_on mentions && [[ "$goal" =~ (^|[[:space:]])@(screen|tab|clip|web|file[[:space:]]+(\"[^\"]+\"|[^[:space:]\"]+))([[:space:]]|$) ]]; do
       case "${BASH_REMATCH[2],,}" in
         screen|tab) $use_screen || ask_args+=(--screen); use_screen=true ;;
         clip) use_clip=true ;;
         web) use_web=true ;;
         file*) [ -z "$mention_file" ] || { notify "FRIDAY" "One @file at a time."; exit 0; }
-               mention_file="${BASH_REMATCH[3]}" ;;
+               mention_file="${BASH_REMATCH[3]}"; mention_file="${mention_file#\"}"; mention_file="${mention_file%\"}" ;;
       esac
       goal="${goal/"${BASH_REMATCH[0]}"/ }"
     done
     goal=$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$goal")
+    if friday_feature_on mentions && [[ "$goal" =~ (^|[[:space:]])@file[[:space:]]+\" ]]; then
+      notify "FRIDAY" "@file \"… needs its closing quote."
+      exit 0
+    fi
     # @clip and @file are the text asked about: one of them, in a plain ask
     # (not with the screen, a selection or a follow-up, which bring their own).
     if { $use_clip || [ -n "$mention_file" ]; } \
@@ -5231,8 +5288,16 @@ case "${1:-}" in
       mention_file="${mention_file/#\~/$HOME}"
       given_dir=$(dirname -- "$(realpath -s -m -- "$mention_file")")
       mention_file=$(realpath -e -- "$mention_file" 2>/dev/null || true)
-      if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || ! grep -Iq . "$mention_file" 2>/dev/null; then
-        notify "FRIDAY" "@file needs a text file I can read."
+      # A PDF is read as its text (pdftotext, from poppler), its first 20 pages.
+      mention_pdf=false
+      [[ "${mention_file,,}" == *.pdf && -r "$mention_file" ]] && mention_pdf=true
+      case "${mention_file,,}" in
+        *.png|*.jpg|*.jpeg|*.webp|*.gif)
+          notify "FRIDAY" "I can't read a picture from a file yet: open it, then ask about the screen (Super+Ctrl+Y)."
+          exit 0 ;;
+      esac
+      if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || { ! $mention_pdf && ! grep -Iq . "$mention_file" 2>/dev/null; }; then
+        notify "FRIDAY" "@file needs a text file or a PDF I can read."
         exit 0
       fi
       case "${mention_file##*/}" in
@@ -5246,7 +5311,13 @@ case "${1:-}" in
         notify "FRIDAY" "That file is in a folder you marked private, so it isn't sent."
         exit 0
       fi
-      context=$(head -c 8000 -- "$mention_file")
+      if $mention_pdf && ! command -v pdftotext >/dev/null 2>&1; then
+        notify "FRIDAY" "Reading a PDF needs pdftotext: sudo pacman -S poppler"
+        exit 0
+      fi
+      if $mention_pdf; then context=$(timeout 20 pdftotext -l 20 -q -- "$mention_file" - 2>/dev/null | head -c 8000 || true)
+      else context=$(head -c 8000 -- "$mention_file"); fi
+      [ -n "${context//[[:space:]]/}" ] || { notify "FRIDAY" "That file has no text I can read (a scanned PDF has only pictures)."; exit 0; }
       if friday_secret_shaped "$context"; then
         notify "FRIDAY" "That file looks like a password or token, so I won't send it."
         exit 0
@@ -5450,6 +5521,7 @@ case "${1:-}" in
       local ans_ok="$1" summary_json="$2" raw_out="$3"
       local answer title details preview urgency actions meta=""
       local local_only=false
+      if $ans_ok; then friday_cue done; else friday_cue failed; fi
       [ "$(jq -r '.local // false' <<<"$summary_json" 2>/dev/null)" = true ] && meta="On this computer · nothing was sent" && local_only=true
       if $ans_ok; then
         answer=$(jq -r '.result // empty' <<<"$summary_json")
@@ -6259,6 +6331,10 @@ $offer"
   dictations)
     # The last 20 voice-typed texts, newest first; copy one back.
     shift; friday_dictations "$@"; exit $?
+    ;;
+  sounds)
+    # Quiet cues for listening, done and failed (off unless turned on).
+    shift; friday_sounds "$@"; exit $?
     ;;
   retention)
     # How long each kind of record FRIDAY keeps stays.

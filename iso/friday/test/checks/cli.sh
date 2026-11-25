@@ -18,6 +18,11 @@ if [[ "\$1" == say ]]; then
   printf 'friday-ctl-say %s%s\n' "\${FRIDAY_SAY_SPEAKER:+[voice \$FRIDAY_SAY_SPEAKER] }" "\$text" >> "$LOG"
   exit "\${SAY_EXIT:-0}"
 fi
+if [[ "\$1" == forget-everywhere ]]; then
+  printf 'friday-ctl-forget-everywhere %s\n' "\${*:2}" >> "$LOG"
+  echo 'Also forgot it everywhere it was copied: 2 from memory journal.'
+  exit 0
+fi
 if [[ "\$1" == backup ]]; then
   printf 'friday-ctl-backup %s\n' "\$*" >> "$LOG"
   echo 'Backed up 3 files to /tmp/x and checked them.'
@@ -115,6 +120,12 @@ if [[ "\$1" == docs ]]; then
   [ -n "\$DOCS_REPLY" ] && printf '%s\n' "\$DOCS_REPLY"
   exit 0
   exit 0
+fi
+if [[ "\$1" == browser && "\$2" == find ]]; then
+  printf 'friday-ctl-browser-find %s\n' "\$*" >> "$LOG"
+  [ -n "\${PAGE_FIND:-}" ] && { echo '{"found":true,"name":"Sign in"}'; exit 0; }
+  [ -n "\${PAGE_PRIVATE:-}" ] && { echo '{"error":"no tab FRIDAY may read"}'; exit 1; }
+  echo '{"found":false}'; exit 1
 fi
 if [[ "\$1" == show ]]; then
   printf 'friday-ctl-show %s\n' "\$*" >> "$LOG"
@@ -378,6 +389,19 @@ if grep -q "^friday-ctl" "$LOG"; then fail "@clip with @file asked anyway"; else
 if grep -qE "^friday-ctl|context screen" "$LOG"; then fail "@screen with @file asked anyway"; else pass "@screen with @file is refused"; fi
 : >"$LOG"; bash "$F" ask "summarise @file /nonexistent/x.txt"; sleep 0.3
 if grep -q "^friday-ctl" "$LOG"; then fail "@file with no such file still asked"; else pass "@file with no such file asks nothing"; fi
+# A file dropped on the ask box: a path with spaces comes in quotes; a PDF is read as its text.
+mkdir -p "$W/drop/my notes"; printf 'ship it on friday\n' >"$W/drop/my notes/plan.txt"
+: >"$LOG"; bash "$F" ask "when do we ship? @file \"$W/drop/my notes/plan.txt\""; sleep 0.3
+contains "@file takes a quoted path with spaces" "$(cat "$LOG")" "ship it on friday"
+printf '%%PDF-1.4 not really\n' >"$W/drop/report.pdf"
+printf '#!/bin/sh\necho "quarterly numbers went up"\n' >"$S/pdftotext"; chmod +x "$S/pdftotext"
+: >"$LOG"; bash "$F" ask "sum up @file $W/drop/report.pdf"; sleep 0.3
+contains "a PDF is read as its text" "$(cat "$LOG")" "quarterly numbers went up"
+rm -f "$S/pdftotext"
+printf 'PNG' >"$W/drop/shot.png"
+: >"$LOG"; bash "$F" ask "what is this @file $W/drop/shot.png"; sleep 0.3
+contains "a picture says how to ask about it instead" "$(cat "$LOG")" "Super+Ctrl+Y"
+if grep -q "^friday-ctl" "$LOG"; then fail "a picture file still asked"; else pass "and asks nothing"; fi
 # "What changed …": the project's commits and the package log since then.
 mkdir -p "$W/wc"; git -C "$W/wc" init -q -b main; printf 'x\n' >"$W/wc/a.txt"
 git -C "$W/wc" add a.txt; git -C "$W/wc" -c user.name=t -c user.email=t@example.com commit -q -m "add the parser"
@@ -744,7 +768,9 @@ printf '# mine, about helix too\n- I use fish\n- my editor is Helix\n' >"$HOME/.
 contains "lists what it keeps" "$(bash "$F" memory)" "- my editor is Helix"
 printf '\n## No longer true\n* I live in Chennai (until 2026-11-23)\n' >>"$HOME/.config/friday/memory.md"
 contains "and what stopped being true" "$(bash "$F" memory)" "  I live in Chennai (until 2026-11-23)"
+: >"$LOG"
 contains "forgets a line" "$(bash "$F" memory forget helix)" "Forgot 1 line(s)"
+contains "and every copy of it" "$(cat "$LOG")" "friday-ctl-forget-everywhere --daemon-stopped helix"
 if grep -q "^- my editor is Helix" "$HOME/.config/friday/memory.md"; then fail "the line is still there"; else pass "the line is gone, the rest stays"; fi
 contains "the rest stays" "$(cat "$HOME/.config/friday/memory.md")" "- I use fish"
 contains "headings stay too" "$(cat "$HOME/.config/friday/memory.md")" "# mine, about helix too"
@@ -1287,6 +1313,17 @@ contains "health: and each part's switches" "$hp" "switches: screen-what-changed
 bash "$F" feature screen-ocr off >/dev/null
 contains "health: a switched-off part says so" "$(bash "$F" health 2>&1)" "screen-ocr OFF"
 bash "$F" feature screen-ocr on >/dev/null
+echo "state sounds"
+SND="$W/sounds"; mkdir -p "$SND"; touch "$SND/complete.oga" "$SND/dialog-error.oga" "$SND/message.oga"
+printf '#!/bin/sh\necho "pw-play $*" >>"%s"\n' "$LOG" >"$S/pw-play"; chmod +x "$S/pw-play"
+: >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "a quiet one"; sleep 0.5
+if grep -q "pw-play" "$LOG"; then fail "a sound played with sounds off"; else pass "sounds are off unless turned on"; fi
+contains "sounds turn on" "$(FRIDAY_SOUNDS_DIR="$SND" bash "$F" sounds on)" "Sounds: on"
+: >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "a quiet one"; sleep 0.5
+contains "an answer done plays the done cue" "$(cat "$LOG")" "complete.oga"
+: >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "hit the limit"; sleep 0.5
+contains "a failed answer plays the failed cue" "$(cat "$LOG")" "dialog-error.oga"
+bash "$F" sounds off >/dev/null; rm -f "$S/pw-play"
 echo "region ask"
 printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
 : >"$LOG"; PICK="what is this chart" bash "$F" ask --region; sleep 0.3
@@ -1463,6 +1500,16 @@ printf '#!/bin/bash\n[[ "$*" == *"call answer"* ]] && sleep 4\necho "quickshell 
 : >"$LOG"; bash "$F" ask "what is my uptime"; sleep 0.3
 contains "a slow FRIDAY Shell still shows the answer in its pill" "$(cat "$LOG")" "call answer present true"
 if grep -q "^notify .*uptime" "$LOG"; then fail "a slow FRIDAY Shell's answer went to a notification"; else pass "and not in a notification on the right"; fi
+# A web page in front: the browser extension outlines it on the page.
+printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"chromium","pid":79,"title":"Example - Chromium","at":[0,0]}' >"$S/hyprctl"
+: >"$LOG"; PAGE_FIND=1 bash "$F" ask "where is sign in"; sleep 0.3
+contains "a page in front: the extension looks on the page" "$(cat "$LOG")" "friday-ctl-browser-find browser find where is sign in"
+if grep -q "friday-ctl-show" "$LOG"; then fail "looked in the app after the page found it"; else pass "and found there, nothing else is asked"; fi
+: >"$LOG"; bash "$F" ask "where is the bookmarks bar"; sleep 0.3
+contains "not on the page: the browser's own controls are looked at" "$(cat "$LOG")" "friday-ctl-show show where is the bookmarks bar"
+: >"$LOG"; PAGE_PRIVATE=1 SHOW_REPLY='{"found":false,"app":"Chromium","controls":["Bank login"]}' bash "$F" ask "where is the bookmarks bar"; sleep 0.3
+if grep -q "friday-ctl-show\|friday-ctl-pick" "$LOG"; then fail "the browser called the tab private, but its controls were still read"
+else pass "a tab the browser calls private: nothing else is looked at"; fi
 unset FRIDAY_SHELL_DIR; rm -f "$S/hyprctl" "$S/quickshell"
 
 echo "routines"

@@ -1606,6 +1606,25 @@ async fn main() -> std::process::ExitCode {
             .unwrap_or(1);
         return std::process::ExitCode::from(code);
     }
+    // `friday-ctl browser find <question>`: ring what it names on the page in front.
+    if raw.first().map(String::as_str) == Some("browser")
+        && raw.get(1).map(String::as_str) == Some("find")
+    {
+        return match friday_mobile::browser_host::find(&raw[2..].join(" ")) {
+            Ok(v) if v.get("found").and_then(serde_json::Value::as_bool) == Some(true) => {
+                println!("{v}");
+                std::process::ExitCode::SUCCESS
+            }
+            Ok(v) => {
+                println!("{v}");
+                std::process::ExitCode::FAILURE
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     if raw.first().map(String::as_str) == Some("browser")
         && raw.get(1).map(String::as_str) == Some("tab")
     {
@@ -1877,6 +1896,57 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("retention") {
         println!("{}", friday_mobile::retention::describe());
         return std::process::ExitCode::SUCCESS;
+    }
+    // A fact forgotten from every place it was copied to.
+    if raw.first().map(String::as_str) == Some("forget-everywhere") {
+        let words = raw[1..]
+            .iter()
+            .filter(|a| *a != "--daemon-stopped")
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let state_path = ShellState::default_path();
+        // A running daemon holds conversations in memory and would write
+        // them back: it stops first (friday memory forget does that, and
+        // says so with --daemon-stopped).
+        let running = std::fs::read_to_string(&state_path).is_ok_and(|s| {
+            s.contains("\"status\": \"running\"") || s.contains("\"status\":\"running\"")
+        });
+        if running && raw.iter().all(|a| a != "--daemon-stopped") {
+            eprintln!("friday-ctl: stop FRIDAY first (friday memory forget does it for you)");
+            return std::process::ExitCode::from(1);
+        }
+        let state = state_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        let places = friday_mobile::forget::Places {
+            memory: friday_mobile::shell_state::memory_dir(
+                std::env::var("FRIDAY_MEMORY_DIR").ok(),
+                &state_path,
+                std::path::Path::new("friday-data"),
+            ),
+            state,
+            proposal: friday_mobile::about::tidy_path(),
+        };
+        return match friday_mobile::forget::everywhere(&places, &words) {
+            Ok(done) if done.is_empty() => {
+                println!("No other copy had \"{words}\".");
+                std::process::ExitCode::SUCCESS
+            }
+            Ok(done) => {
+                let list: Vec<String> = done.iter().map(|(w, n)| format!("{n} from {w}")).collect();
+                println!(
+                    "Also forgot it everywhere it was copied: {}.",
+                    list.join(", ")
+                );
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("friday-ctl: {e}");
+                std::process::ExitCode::from(2)
+            }
+        };
     }
     if raw.first().map(String::as_str) == Some("usage") {
         let days: u32 = raw

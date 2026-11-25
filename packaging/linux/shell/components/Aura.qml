@@ -1,4 +1,5 @@
 import QtQuick
+import qs.common
 
 // FRIDAY's presence while it listens or thinks: layered ribbons of light that
 // flow like a voice, pinched to nothing at both ends and glowing where they
@@ -13,6 +14,9 @@ Item {
 
   property real size: 40
   property string mode: "working"
+  // Still (motion off): drawn once for each change instead of every frame.
+  onModeChanged: if (!Theme.motion) canvas.requestPaint()
+  onEnergyChanged: if (!Theme.motion) canvas.requestPaint()
   property color primary: "#ff8f4c"
   property color secondary: "#5fd3bc"
   property color tertiary: "#b48cff"
@@ -30,7 +34,7 @@ Item {
   Timer {
     interval: 33
     repeat: true
-    running: root.visible
+    running: root.visible && Theme.motion
     onTriggered: { root.t += 0.033 * (0.6 + root.energy); canvas.requestPaint(); }
   }
 

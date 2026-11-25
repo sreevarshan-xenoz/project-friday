@@ -228,6 +228,9 @@ The last row, "Ask FRIDAY", is the only one that asks the AI: typing alone sends
 FRIDAY OS has its own keymap (Super+K lists it), Super+L locks (with face unlock
 after `friday face setup`, below), and Super+Alt+G switches game mode. `friday doctor`
 checks that everything is running; `friday report` writes a redacted bug report.
+`friday feature motion off` makes FRIDAY Shell change at once, with no sliding,
+springing or pulsing; `friday.nomotion` on the installer's boot line keeps its
+waiting screen still too.
 
 ## Face unlock
 

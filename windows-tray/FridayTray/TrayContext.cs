@@ -659,6 +659,7 @@ internal sealed class TrayContext : ApplicationContext
         try
         {
             _icon.Text = "FRIDAY: listening…";
+            Cue("listening");
             var psi = new System.Diagnostics.ProcessStartInfo(_install.Ctl)
             {
                 UseShellExecute = false,
@@ -1137,9 +1138,23 @@ internal sealed class TrayContext : ApplicationContext
     /// Shows the answer, and reads a good one aloud when spoken answers are
     /// on; asked by voice, a follow-up can be spoken after it.
     /// </summary>
+    /// <summary>A soft state sound, when sounds are on (Voice page).</summary>
+    private void Cue(string cue)
+    {
+        if (!Sounds.On(_install.Paths) || !AppSettings.FeatureOn(EnvFile.Load(_install.Paths.EnvFile), "state-sounds"))
+            return;
+        var media = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Media");
+        if (Sounds.FileFor(media, cue) is not { } file)
+            return;
+        try { new System.Media.SoundPlayer(file).Play(); }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException) { }
+    }
+
     private void ShowAnswer(AnswerWindow form, AskOutcome outcome, bool spoken = false, SayStream? saying = null)
     {
         form.ShowOutcome(outcome);
+        if (outcome.Confirmation is null)
+            Cue(outcome.Ok ? "done" : "failed");
         if (!outcome.Ok || outcome.Confirmation is not null || string.IsNullOrWhiteSpace(outcome.Answer)
             || !Speaking.Enabled(_install.Paths))
         {

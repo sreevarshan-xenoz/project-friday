@@ -210,13 +210,16 @@ Singleton {
   readonly property int gap: 8
   readonly property int pad: 16
 
-  // Motion: one decelerating curve, three durations.
-  readonly property int fast: 140
-  readonly property int medium: 260
-  readonly property int slow: 420
+  // Motion: one decelerating curve, three durations. With motion switched
+  // off (friday feature motion off) everything changes at once and nothing
+  // pulses or loops.
+  readonly property bool motion: Config.featureOn("motion")
+  readonly property int fast: motion ? 140 : 0
+  readonly property int medium: motion ? 260 : 0
+  readonly property int slow: motion ? 420 : 0
   readonly property int easing: Easing.OutCubic
   // Things that appear spring in: past their mark a little, then settle.
-  readonly property int spring: Easing.OutBack
+  readonly property int spring: motion ? Easing.OutBack : Easing.OutCubic
 
   // Omarchy's colors.toml: flat `key = "value"` lines.
   FileView {
