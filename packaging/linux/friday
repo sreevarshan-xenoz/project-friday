@@ -1121,9 +1121,9 @@ friday_keys_conflicts() {
     def friday: (.description // "") | startswith("FRIDAY");
     def what: if (.description // "") != "" then .description
       else "\(.dispatcher // "") \(.arg // "")" | gsub("^ +| +$"; "") end;
-    [ .[] | select((.key // "") != "") | . + { c: combo, r: (.release // false) } ] as $b
-    | [ $b[] | select(friday) | [.c, .r] ] as $mine
-    | $b[] | select((friday | not) and ([.c, .r] as $k | $mine | index([$k])))
+    [ .[] | select((.key // "") != "") | . + { c: combo, r: (.release // false), s: (.submap // "") } ] as $b
+    | [ $b[] | select(friday) | [.c, .r, .s] ] as $mine
+    | $b[] | select((friday | not) and ([.c, .r, .s] as $k | $mine | index([$k])))
     | "\(.c)\t\(what)"' <<<"$binds" 2>/dev/null | sort -u || true
 }
 friday_keys() {
