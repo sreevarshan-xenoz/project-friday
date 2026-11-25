@@ -28,7 +28,7 @@ pkgdesc="FRIDAY: press a key, ask about what's on screen or selected, get an ans
 arch=('x86_64')
 url="https://github.com/sreevarshan-xenoz/project-friday"
 license=('MIT OR Apache-2.0')
-depends=('gcc-libs' 'glibc' 'openssl' 'bash' 'curl' 'jq' 'fuzzel' 'libnotify' 'wl-clipboard')
+depends=('gcc-libs' 'glibc' 'openssl' 'bash' 'curl' 'jq' 'fuzzel' 'libnotify' 'wl-clipboard' 'hicolor-icon-theme')
 makedepends=('cargo' 'git')
 optdepends=(
   'grim: ask about the screen (friday ask --screen)'
