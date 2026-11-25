@@ -141,6 +141,7 @@ package() {
     install -Dm644 "$f" "$pkgdir/usr/share/friday/shell/${f#"$lin/shell/"}"
   done
   # The key FRIDAY releases are signed with, for pacman's [friday] repo.
+  install -Dm644 "$lin/whats-new" -t "$pkgdir/usr/share/friday"
   install -Dm644 packaging/arch/friday-signing-key.asc packaging/arch/friday-signing-key.fpr \
     -t "$pkgdir/usr/share/friday"
   install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname"
