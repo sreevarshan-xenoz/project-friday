@@ -80,7 +80,12 @@ battery, timers, opening Wi-Fi settings. The answer says
 Groq, Cerebras, Gemini, NVIDIA NIM and OpenRouter's free models give out free
 keys, but their free tiers may keep or train on what is sent. Add a key with
 `friday setup-ai --keep-others groq`, then turn it on with
-`friday free-tiers on groq`: it says so in red first. `friday free-tiers list`
+`friday free-tiers on groq`: it says so in red first.
+
+`friday free-tiers on apisfreellm` needs no key at all: apisfreellm.com
+answers with one ~35B model (`free-ai`, 32k context, about 10,000 requests a
+day). It names no operator and no terms, and it records each request's IP
+address and reads every prompt, so never send it anything private. `friday free-tiers list`
 shows which are on; `friday free-tiers off groq` stops using one.
 
 Once on, it answers like your other models, the screen and selections too.

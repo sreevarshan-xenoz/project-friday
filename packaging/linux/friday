@@ -4645,7 +4645,7 @@ friday_feature() {
 friday_free_tiers() {
   local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/public-providers"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
-  local ids="openrouter groq cerebras gemini nvidia-nim" sub="${1:-list}" id="${2:-}" var state
+  local ids="openrouter groq cerebras gemini nvidia-nim apisfreellm" sub="${1:-list}" id="${2:-}" var state
   case "$sub" in
     list)
       echo "Public free models:"
@@ -4669,11 +4669,12 @@ friday_free_tiers() {
   [[ -n "$id" && "$id" != *[[:space:]]* && " $ids " == *" $id "* ]] || { echo "friday: choose one of: $ids" >&2; return 1; }
   if [ "$sub" = on ]; then
     var=$(tr 'a-z-' 'A-Z_' <<<"$id")_API_KEY
-    if ! grep -qE "^${var}=[^[:space:]]" "$env_file" 2>/dev/null; then
+    if [ "$id" != apisfreellm ] && ! grep -qE "^${var}=[^[:space:]]" "$env_file" 2>/dev/null; then
       echo "friday: $id needs its free key first: friday setup-ai --keep-others $id" >&2
       return 1
     fi
     printf '\e[31m%s may keep or train on what is sent to it: treat it as public.\e[0m\n' "$id"
+    [ "$id" != apisfreellm ] || printf '\e[31m%s\e[0m\n' "apisfreellm.com needs no key and names no operator and no terms; it records each request's IP address and reads every prompt. Never send it anything private."
     if friday_feature_on free-tiers-everywhere; then
       echo "It answers every ask, the screen and selections too. To keep it to plain typed questions: friday feature free-tiers-everywhere off"
     else

@@ -601,6 +601,9 @@ bash "$F" feature free-tiers-everywhere off >/dev/null
 contains "with everywhere off, the list says the guard is on" "$(bash "$F" free-tiers list)" "Guard on"
 contains "and turning one on says so" "$(bash "$F" free-tiers on groq --yes 2>&1)" "only plain typed questions"
 bash "$F" feature free-tiers-everywhere on >/dev/null
+out=$(bash "$F" free-tiers on apisfreellm --yes 2>&1)
+contains "apisfreellm needs no key and says it records IPs and prompts" "$out" "records each request's IP address"
+contains "and is listed on" "$(bash "$F" free-tiers list)" "apisfreellm on"
 rm -f "$HOME/.config/friday/public-providers"; sed -i '/^GROQ_API_KEY=placeholder-key$/d' "$HOME/.config/friday/friday.env"
 rm -f "$S/qalc"
 shapes=$(bash -c 'source <(sed -n "/^friday_calc_expr() {/,/^}/p" "$1"); shift; for q in "$@"; do friday_calc_expr "$q" >/dev/null && printf "Y" || printf "."; done' _ "$F" \
