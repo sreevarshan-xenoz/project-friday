@@ -5539,7 +5539,8 @@ case "${1:-}" in
     # FRIDAY Shell can be slow to reply while the ask box is up; 3 seconds
     # wasn't always enough, and a slow reply sent the answer to a
     # notification on the right instead of the centre pill.
-    { if pill_wait=8 pill state; then : >"$lookups/pill"; fi; } &
+    # (Quiet when the ask ended first and its lookups folder is gone.)
+    { if pill_wait=8 pill state; then : 2>/dev/null >"$lookups/pill"; fi; } &
     lookup_pids+=" $!"
     # The window in front at the keypress: "this window" means it, even if
     # another is in front by the time FRIDAY acts.
