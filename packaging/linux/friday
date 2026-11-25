@@ -85,6 +85,7 @@ Autonomous Agent & Cognitive Loop:
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday model [ask|screen|chores] [provider/model|auto]  The model each job tries first
+  friday model rank                Benchmark models on screen questions and pick the best
   friday goal "<objective>"        Dispatch an autonomous goal to FRIDAY agent
   friday cancel                    Cancel the goal FRIDAY is working on
   friday tasks [pause|resume|delete <id>|recipes|recipe <name>|status|on|off]
@@ -4723,6 +4724,27 @@ friday_local_ai_install() {
 friday_model() {
   local job="${1:-}" pick="${2:-}" var v
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
+  if [ "$job" = rank ]; then
+    local tmp best rc
+    tmp=$(mktemp)
+    friday-ctl models rank-screen 2>&1 | tee "$tmp"
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -eq 0 ]; then
+      best=$(sed -n 's/^Use the best for screen asks: friday model screen //p' "$tmp" | head -n1)
+      rm -f "$tmp"
+      if [ -t 0 ] && [ -n "$best" ]; then
+        local a
+        read -r -p "Set $best for screen asks? [y/N] " a || a=n
+        case "$a" in
+          [yY]*) friday_model screen "$best" ;;
+        esac
+      fi
+      return 0
+    else
+      rm -f "$tmp"
+      return "$rc"
+    fi
+  fi
   if [ -z "$job" ]; then
     friday_feature_on model-per-job || echo "Model per job is turned off (friday feature model-per-job on)."
     for job in ask screen chores; do
@@ -4730,11 +4752,11 @@ friday_model() {
       v=$(grep -E "^$var=" "$env_file" 2>/dev/null | tail -n1 | cut -d= -f2- || true)
       echo "$job: ${v:-auto}"
     done
-    echo "Set one: friday model <ask|screen|chores> <provider/model>, or auto. The card under an answer names the model that gave it (friday providers lists who answered)."
+    echo "Set one: friday model <ask|screen|chores> <provider/model>, or auto. Rank screen models: friday model rank. The card under an answer names the model that gave it (friday providers lists who answered)."
     return 0
   fi
   case "$job" in ask|screen|chores) ;; *)
-    echo "usage: friday model [ask|screen|chores] [provider/model|auto]" >&2; return 2 ;;
+    echo "usage: friday model [ask|screen|chores] [provider/model|auto] | rank" >&2; return 2 ;;
   esac
   if [ "$pick" != auto ] && ! [[ $pick =~ ^[^/[:space:]]+/[^[:space:]]+$ ]]; then
     echo "friday: name the model as provider/model (e.g. groq/llama-3.3-70b-versatile), or auto" >&2; return 2

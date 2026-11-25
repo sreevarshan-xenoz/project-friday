@@ -39,6 +39,11 @@ if [[ "\$1" == answers ]]; then
   echo 'Past answers about docker:'
   exit 0
 fi
+if [[ "\$1" == models ]]; then
+  printf 'friday-ctl-models %s\n' "\${*:2}" >> "$LOG"
+  echo "Use the best for screen asks: friday model screen opencode/gemini-2.0-flash"
+  exit 0
+fi
 if [[ "\$1" == import ]]; then
   printf 'friday-ctl-import %s\n' "\${*:2}" >> "$LOG"
   echo 'GROQ_API_KEY (…6789) from OpenCode: will be added'
@@ -739,6 +744,9 @@ contains "and shown" "$(bash "$F" model)" "ask: groq/llama-3.3-70b"
 bash "$F" model ask auto >/dev/null
 if grep -q FRIDAY_MODEL_ASK "$HOME/.config/friday/friday.env"; then fail "auto clears the pick"; else pass "auto clears the pick"; fi
 contains "a pick needs provider/model" "$(bash "$F" model ask llama 2>&1)" "provider/model"
+: >"$LOG"
+bash "$F" model rank </dev/null >/dev/null
+contains "friday model rank calls friday-ctl models rank-screen" "$(cat "$LOG")" "friday-ctl-models rank-screen"
 
 echo "checking agents' work"
 contains "off unless turned on" "$(bash "$F" agents check)" "Checking agents' work: off"
