@@ -889,8 +889,11 @@ impl AgentDesktopUi {
         }
         if matches.is_empty() {
             // One safe control like it, found by its words, to offer instead
-            // of guessing again (ui-recovery).
+            // of guessing again (ui-recovery). Linux only: the label rules
+            // live in friday_actions' AT-SPI module.
+            #[allow(unused_mut)]
             let mut near = String::new();
+            #[cfg(target_os = "linux")]
             if crate::features::on("ui-recovery") {
                 let mut seen: Vec<ActionableMatch> = Vec::new();
                 let mut words: Vec<&str> = name
