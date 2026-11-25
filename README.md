@@ -331,7 +331,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 | `friday mcp [allow\|deny <tool>]` | Let other AI apps use FRIDAY (MCP) |
 | `friday wrong [reason\|--list]` | Keep a repro of a bad answer (no text) |
 | `friday forget [what] [--yes]` | Show what FRIDAY keeps on this computer, or wipe it |
-| `friday phone [on\|off]` | Pair a phone with Pocketdesk (it asks first) |
+| `friday phone [on\|off]` | Pair a phone with [FRIDAY Mobile](https://github.com/sreevarshan-xenoz/friday-mobile) (it asks first) |
 
 Web search (`--web`) queries an ordered chain of backends: SearXNG (`FRIDAY_SEARXNG_URL`), Brave Search (`BRAVE_SEARCH_API_KEY`), DuckDuckGo, and Wikipedia.
 

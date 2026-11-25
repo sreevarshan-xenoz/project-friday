@@ -139,7 +139,7 @@ Autonomous Agent & Cognitive Loop:
   friday feature [list|<name> on|off]  Switch one of FRIDAY's features off or on again
   friday autonomy [ask-all|ask-risky|act]  How much FRIDAY may do without asking
                                    Ask about the screen with the window's text, not a screenshot
-  friday phone [status|on|off|send [thread]] Pair a phone with Pocketdesk; send it the last answer or this conversation
+  friday phone [status|on|off|send [thread]] Pair a phone with FRIDAY Mobile; send it the last answer or this conversation
   friday phone devices|unpair <phone>  The paired phones, last heard from; cut one off
   friday helper [status|enable|disable]
                                    System helper for package updates and installs
@@ -1199,44 +1199,63 @@ friday_screen_text() {
   [ -z "$want" ] && echo "Screen text: on" || echo "Screen text: off"
 }
 
-# Pocketdesk (the phone as a screen, keyboard and remote): FRIDAY OS installs
+# The phone app's command, which is also its user unit's name: FRIDAY Mobile
+# (friday-mobile), or Pocketdesk on a computer that still has only that.
+# Prints nothing and fails when neither is installed.
+friday_phone_app() {
+  local c
+  for c in friday-mobile pocketdesk; do
+    command -v "$c" >/dev/null 2>&1 && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+# The name a person knows that app by.
+friday_phone_app_name() {
+  if [ "${1:-friday-mobile}" = pocketdesk ]; then echo Pocketdesk; else echo "FRIDAY Mobile"; fi
+}
+
+# FRIDAY Mobile (the phone as a screen, keyboard and remote): FRIDAY OS installs
 # it but leaves it off. `friday phone on` starts its server for this session
 # (after a yes) and prints a pairing PIN; once a phone is paired and has
 # "Answer my questions" on, FRIDAY's confirmations also go to it.
 friday_phone() {
+  local pd label
+  pd=$(friday_phone_app) || pd=""
+  label=$(friday_phone_app_name "$pd")
   case "${1:-status}" in
     status)
-      if ! command -v pocketdesk >/dev/null 2>&1; then
-        echo "Phone: Pocketdesk is not installed (sudo pacman -S pocketdesk)"
-      elif ! systemctl --user is-active --quiet pocketdesk 2>/dev/null; then
+      if [ -z "$pd" ]; then
+        echo "Phone: FRIDAY Mobile is not installed (sudo pacman -S friday-mobile)"
+      elif ! systemctl --user is-active --quiet "$pd" 2>/dev/null; then
         echo "Phone: off (pair a phone: friday phone on)"
       else
         local n
-        n=$(pocketdesk devices --json 2>/dev/null | jq '.devices | length' 2>/dev/null || echo "?")
+        n=$("$pd" devices --json 2>/dev/null | jq '.devices | length' 2>/dev/null || echo "?")
         echo "Phone: on, $n paired (answer FRIDAY from it: turn on \"Answer my questions\" on the phone's Devices page)"
       fi
       ;;
     on|pair)
-      command -v pocketdesk >/dev/null 2>&1 || { echo "friday: Pocketdesk is not installed (sudo pacman -S pocketdesk)" >&2; return 1; }
+      [ -n "$pd" ] || { echo "friday: FRIDAY Mobile is not installed (sudo pacman -S friday-mobile)" >&2; return 1; }
       if [ "${2:-}" != "--yes" ]; then
-        cat <<'EOF2'
-Pocketdesk lets your phone see and control this computer, and answer FRIDAY's
+        cat <<EOF2
+$label lets your phone see and control this computer, and answer FRIDAY's
 questions. Turning it on starts its server in your session (it starts at every
 sign-in until you run: friday phone off). Only phones you pair with a PIN shown
 here can connect.
 EOF2
         local a
-        read -r -p "Turn Pocketdesk on? [y/N] " a || a=n
+        read -r -p "Turn $label on? [y/N] " a || a=n
         [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 0; }
       fi
-      systemctl --user enable --now pocketdesk || return 1
+      systemctl --user enable --now "$pd" || return 1
       echo
-      echo "Pocketdesk is on. On the phone, open the Pocketdesk app, tap Pair, and enter:"
-      pocketdesk pair || return 1
-      echo "The PIN is good for 5 minutes. Pocketdesk's own app is in the app menu."
+      echo "$label is on. On the phone, open the $label app, tap Pair, and enter:"
+      "$pd" pair || return 1
+      echo "The PIN is good for 5 minutes. $label's own app is in the app menu."
       ;;
     off)
-      systemctl --user disable --now pocketdesk 2>/dev/null || true
+      [ -z "$pd" ] || systemctl --user disable --now "$pd" 2>/dev/null || true
       echo "Phone: off"
       ;;
     send) shift; friday_phone_send "$@" ;;
@@ -1253,7 +1272,7 @@ EOF2
 # FRIDAY's questions, on the phone too, and answered by a "yes" or "no" typed
 # in the ask box (friday_confirm_typed): the first answer wins. Prints run or
 # cancel (cancel when nobody answered). The phone's Yes needs its fingerprint
-# or screen lock; with no phone set up, `pocketdesk ask` says so at once.
+# or screen lock; with no phone set up, the phone app says so at once.
 # friday_yes_no <words>: run or cancel when the words, all of them, are a
 # yes or a no (typed, or said to FRIDAY); fails otherwise.
 friday_yes_no() {
@@ -1342,9 +1361,10 @@ friday_confirm() {
   [ -z "$preview" ] || body="$body"$'\n'"$preview"
   notify-send -a FRIDAY -u normal "${acts[@]}" -- "FRIDAY wants to run" "$body"$'\n'"$also" >"$t/desk" 2>/dev/null &
   desk_pid=$!
-  if command -v pocketdesk >/dev/null 2>&1; then
+  local pd
+  if pd=$(friday_phone_app); then
     (
-      case "$(pocketdesk ask --wait 120 "FRIDAY wants to run: $action" 2>/dev/null)" in
+      case "$("$pd" ask --wait 120 "FRIDAY wants to run: $action" 2>/dev/null)" in
         yes) echo run ;;
         no) echo cancel ;;
       esac
@@ -2336,13 +2356,13 @@ friday_phone_devices() {
     (if ($may | length) > 0 then "; may use: \($may | join(", "))" else "" end)' <<<"$js"
 }
 
-# Pocketdesk's paired phones as JSON, or a plain reason it can't say.
+# The phone app's paired phones as JSON, or a plain reason it can't say.
 friday_phone_list() {
-  local js
-  command -v pocketdesk >/dev/null 2>&1 || { echo "No phone is set up: friday phone on pairs one." >&2; return 1; }
-  js=$(pocketdesk devices --json 2>/dev/null)
+  local js pd
+  pd=$(friday_phone_app) || { echo "No phone is set up: friday phone on pairs one." >&2; return 1; }
+  js=$("$pd" devices --json 2>/dev/null)
   if ! jq -e '.devices | type == "array"' >/dev/null 2>&1 <<<"$js"; then
-    echo "Couldn't read Pocketdesk's paired phones$(jq -r '.error // empty | ": " + .' <<<"$js" 2>/dev/null)." >&2
+    echo "Couldn't read $(friday_phone_app_name "$pd")'s paired phones$(jq -r '.error // empty | ": " + .' <<<"$js" 2>/dev/null)." >&2
     return 1
   fi
   printf '%s\n' "$js"
@@ -2370,16 +2390,18 @@ friday_phone_unpair() {
     read -r -p "Unpair $name (${id:0:8})? It loses access to this computer at once. [y/N] " a || a=n
     [[ "$a" =~ ^[Yy] ]] || { echo "Nothing changed."; return 1; }
   fi
-  pocketdesk unpair "$id" >/dev/null 2>&1 || { echo "Pocketdesk couldn't unpair $name."; return 1; }
+  local pd
+  pd=$(friday_phone_app) || return 1
+  "$pd" unpair "$id" >/dev/null 2>&1 || { echo "$(friday_phone_app_name "$pd") couldn't unpair $name."; return 1; }
   echo "Unpaired $name: it can't reach this computer any more. Pair it again with friday phone on."
 }
 
 # `friday phone send` / "send the answer to my phone": the last answer, as a
-# file, to the paired phone (Pocketdesk, on your network or tailnet).
+# file, to the paired phone (FRIDAY Mobile, on your network or tailnet).
 # `friday phone send thread`: the whole current conversation, to pick up there.
 friday_phone_send() {
-  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday" out file what
-  command -v pocketdesk >/dev/null 2>&1 || { echo "No phone is set up: friday phone on pairs one."; return 1; }
+  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday" out file what pd
+  pd=$(friday_phone_app) || { echo "No phone is set up: friday phone on pairs one."; return 1; }
   (umask 077; mkdir -p "$d/phone")
   if [ "${1:-}" = thread ]; then
     file="$d/phone/FRIDAY conversation.md"; what="this conversation"
@@ -2389,11 +2411,11 @@ friday_phone_send() {
     file="$d/phone/FRIDAY answer.md"; what="the last answer"
     (umask 077; cp -f "$d/last-answer.md" "$file")
   fi
-  if out=$(timeout 20 pocketdesk send-to-phone "$file" 2>&1); then
+  if out=$(timeout 20 "$pd" send-to-phone "$file" 2>&1); then
     echo "Sent $what to your phone."
   else
     case $? in
-      3) echo "Pocketdesk isn't running: friday phone on starts it." ;;
+      3) echo "$(friday_phone_app_name "$pd") isn't running: friday phone on starts it." ;;
       *) echo "Couldn't send it to your phone${out:+: $(tail -n1 <<<"$out")}." ;;
     esac
     return 1
@@ -2897,7 +2919,7 @@ friday_welcome() {
   local free=true
   grep -qE '^([A-Z_]+_API_KEY|FRIDAY_AGENT_CLIS)=.+' "$env_file" 2>/dev/null && free=false
   local phone=false
-  command -v pocketdesk >/dev/null 2>&1 && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-phone-offer" ] && phone=true
+  friday_phone_app >/dev/null && [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/no-phone-offer" ] && phone=true
   # FRIDAY Shell walks through the keys (press each one); the notification
   # below is for desktops without it. The shell can take a while to come up
   # (slow disks, software rendering), so keep asking until it answers, and only
