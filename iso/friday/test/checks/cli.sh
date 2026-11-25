@@ -1553,11 +1553,11 @@ printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n'
 export FRIDAY_SHELL_DIR="$W/fakeshell"
 : >"$LOG"; SHOW_REPLY='{"found":true,"name":"Output Devices","x":213,"y":46,"width":131,"height":37}' bash "$F" ask "where's output devices"; sleep 0.3
 contains "where's …: FRIDAY looks in the window in front" "$(cat "$LOG")" "friday-ctl-show show where's output devices"
-contains "and rings what it found" "$(cat "$LOG")" "ipc call ring point 213 46 131 37 Here: Output Devices"
+contains "and rings what it found" "$(cat "$LOG")" "ipc call -- ring point 213 46 131 37 Here: Output Devices"
 if grep -q "^friday-ctl '" "$LOG"; then fail "a found control still asked the AI"; else pass "a found control asks no AI"; fi
 : >"$LOG"; SHOW_REPLY='{"found":false,"app":"Settings","controls":["Wi-Fi","Appearance","Sound"]}' bash "$F" ask "where is dark mode"; sleep 0.3
 contains "no name fits: the model picks from the control names" "$(cat "$LOG")" "friday-ctl-pick"
-contains "and its pick is ringed" "$(cat "$LOG")" "ipc call ring point 30 200 180 40 Here: Appearance"
+contains "and its pick is ringed" "$(cat "$LOG")" "ipc call -- ring point 30 200 180 40 Here: Appearance"
 : >"$LOG"; bash "$F" ask "where is the eiffel tower"; sleep 0.3
 if grep -q "ring show" "$LOG"; then fail "drew a ring for a question about the world"; else pass "an app FRIDAY can't see: no ring"; fi
 contains "and the question is answered in words" "$(cat "$LOG")" "friday-ctl where\\ is\\ the\\ eiffel\\ tower"
@@ -1566,10 +1566,14 @@ printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n'
 if grep -q "friday-ctl-pick" "$LOG"; then fail "sent a private window's controls to the model"; else pass "a private window's controls stay here"; fi
 # A FRIDAY Shell slow to reply (4 s) still gets the answer in its centre pill,
 # never a notification on the right instead.
-printf '#!/bin/bash\n[[ "$*" == *"call answer"* ]] && sleep 4\necho "quickshell $*" >>"%s"\n' "$LOG" >"$S/quickshell"
+printf '#!/bin/bash\n[[ "$*" == *"call -- answer"* ]] && sleep 4\necho "quickshell $*" >>"%s"\n' "$LOG" >"$S/quickshell"
 : >"$LOG"; bash "$F" ask "what is my uptime"; sleep 0.3
-contains "a slow FRIDAY Shell still shows the answer in its pill" "$(cat "$LOG")" "call answer present true"
+contains "a slow FRIDAY Shell still shows the answer in its pill" "$(cat "$LOG")" "call -- answer present true"
 if grep -q "^notify .*uptime" "$LOG"; then fail "a slow FRIDAY Shell's answer went to a notification"; else pass "and not in a notification on the right"; fi
+# A screen ask's card gets its mode (--screen) as an argument, not a
+# quickshell option (it refused it, and the answer went to a notification).
+: >"$LOG"; bash "$F" shell ipc answer present true "Why did it fail?" "A comma." "" --screen ""
+contains "the answer card's --screen mode is passed after --" "$(cat "$LOG")" "ipc call -- answer present true Why did it fail? A comma.  --screen"
 # A web page in front: the browser extension outlines it on the page.
 printf '#!/bin/bash\n[[ "$*" == "activewindow -j" ]] && printf %%s %q\nexit 0\n' '{"class":"chromium","pid":79,"title":"Example - Chromium","at":[0,0]}' >"$S/hyprctl"
 : >"$LOG"; PAGE_FIND=1 bash "$F" ask "where is sign in"; sleep 0.3
@@ -2604,7 +2608,7 @@ if grep -q "^notify " "$LOG"; then fail "shown twice"; else pass "shown only onc
 TOUR="$W/tour"; mkdir -p "$TOUR/bin" "$TOUR/shell"; : >"$TOUR/shell/shell.qml"
 printf '#!/bin/bash\necho "quickshell $*" >>"%s"\n' "$LOG" >"$TOUR/bin/quickshell"; chmod +x "$TOUR/bin/quickshell"
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" welcome --force
-contains "with FRIDAY Shell, the welcome starts its tour" "$(cat "$LOG")" "ipc call tour begin"
+contains "with FRIDAY Shell, the welcome starts its tour" "$(cat "$LOG")" "ipc call -- tour begin"
 if grep -q "^notify " "$LOG"; then fail "the tour welcome also notified"; else pass "the tour replaces the welcome notification"; fi
 
 echo "what's new"
@@ -2718,10 +2722,10 @@ bash "$F" voice speak try 9 >/dev/null 2>&1 && fail "try took a voice that isn't
 bash "$F" voice speak off >/dev/null
 if [[ -e "$SPK" ]]; then fail "off left the switch on"; else pass "off removes the switch"; fi
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" tour
-contains "friday tour starts the tour again, even after the first login" "$(cat "$LOG")" "ipc call tour begin"
+contains "friday tour starts the tour again, even after the first login" "$(cat "$LOG")" "ipc call -- tour begin"
 # `friday app` opens FRIDAY Settings on a page through the shell.
 : >"$LOG"; PATH="$TOUR/bin:$PATH" FRIDAY_SHELL_DIR="$TOUR/shell" bash "$F" app Voice
-contains "friday app opens FRIDAY Settings on the page asked for" "$(cat "$LOG")" "ipc call settings open Voice"
+contains "friday app opens FRIDAY Settings on the page asked for" "$(cat "$LOG")" "ipc call -- settings open Voice"
 # A shell that is slow to start: the tour keeps asking, then starts; it is not given up on or doubled with a notification.
 SLOW="$W/slowtour"; mkdir -p "$SLOW/bin" "$SLOW/shell"; : >"$SLOW/shell/shell.qml"; rm -f "$SLOW/count"
 printf '#!/bin/bash\nn=$(( $(cat "%s/count" 2>/dev/null || echo 0) + 1 )); echo $n >"%s/count"\necho "quickshell try $n $*" >>"%s"\n[ "$n" -ge 3 ]\n' "$SLOW" "$SLOW" "$LOG" >"$SLOW/bin/quickshell"; chmod +x "$SLOW/bin/quickshell"
