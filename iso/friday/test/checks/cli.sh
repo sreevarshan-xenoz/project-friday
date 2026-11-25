@@ -2397,7 +2397,15 @@ contains "with nothing waiting, \"yes\" is just a question" "$(cat "$LOG")" "fri
 printf '#!/bin/sh\necho "{\\"api\\":1,\\"devices\\":[{\\"id\\":\\"a\\"},{\\"id\\":\\"b\\"}],\\"server_running\\":true}"\n' >"$CS/pocketdesk"; chmod +x "$CS/pocketdesk"
 printf '#!/bin/sh\nexit 0\n' >"$CS/systemctl"; chmod +x "$CS/systemctl"
 contains "phone status counts the paired phones" "$(PATH="$CS:$PATH" bash "$F" phone status)" "on, 2 paired"
-rm -f "$CS/systemctl"
+contains "and says Pocketdesk is replaced by FRIDAY Mobile" "$(PATH="$CS:$PATH" bash "$F" phone status)" "FRIDAY Mobile replaces it"
+# Both installed: the one whose server is running is the phone app.
+printf '#!/bin/sh\nexit 0\n' >"$CS/friday-mobile"; chmod +x "$CS/friday-mobile"
+printf '#!/bin/sh\n[ "$4" = pocketdesk ]\n' >"$CS/systemctl"
+contains "Pocketdesk running, FRIDAY Mobile not: Pocketdesk is used" "$(PATH="$CS:$PATH" bash "$F" phone status)" "This is Pocketdesk"
+printf '#!/bin/sh\nexit 3\n' >"$CS/systemctl"
+contains "neither running: FRIDAY Mobile is used" "$(PATH="$CS:$PATH" bash "$F" phone status)" "Phone: off"
+if PATH="$CS:$PATH" bash "$F" phone status | grep -q Pocketdesk; then fail "neither running still named Pocketdesk"; else pass "and Pocketdesk isn't named"; fi
+rm -f "$CS/systemctl" "$CS/friday-mobile"
 rm -f "$CS/pocketdesk"
 [[ "$(NS_ANSWER=run conf)" == run ]] && pass "confirm: works with no Pocketdesk at all" || fail "confirm: no Pocketdesk"
 # Asked by voice: after a chime, a spoken "run" or "cancel" answers it; a
