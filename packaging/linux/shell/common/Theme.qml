@@ -15,6 +15,8 @@ import Quickshell.Io
 //   frost  cool slate, ice-blue accent, lilac signal
 //   moss   dark olive, lichen-green accent, amber signal
 //   dawn   light: warm paper, rust accent, deep-teal signal
+//   contrast  high contrast: black, white text and edges, yellow accent,
+//          no see-through glass
 // or "classic": follow the active desktop theme ($XDG_STATE_HOME/omarchy/
 // current/theme/colors.toml, where omarchy-theme-set links it), live.
 //
@@ -130,7 +132,25 @@ Singleton {
     ok: "#a3be8c"
   })
 
-  readonly property var own: ({ core: core, ember: ember, polar: polar, frost: frost, moss: moss, dawn: dawn })
+  readonly property var contrast: ({
+    bg: "#000000",
+    surface: "#0a0a0a",
+    raised: "#1c1c1c",
+    overlay: "#333333",
+    outline: "#ffffff",
+    text: "#ffffff",
+    subtext: "#f2f2f2",
+    faint: "#cccccc",
+    accent: "#ffd60a",
+    onAccent: "#000000",
+    signal: "#5ac8fa",
+    error: "#ff6b6b",
+    warn: "#ffb000",
+    ok: "#5ee36a"
+  })
+
+  readonly property var own: ({ core: core, ember: ember, polar: polar, frost: frost, moss: moss, dawn: dawn, contrast: contrast })
+  readonly property bool highContrast: Config.palette === "contrast"
   readonly property var palette: own[Config.palette] || core
 
   property var omarchy: ({})
@@ -180,9 +200,9 @@ Singleton {
   // the desktop show through, blurred where the compositor can (Hyprland:
   // the layer rules in hypr-look.lua). Opaque enough to read without blur.
   readonly property bool light: bg.hslLightness > 0.5
-  readonly property color glass: alpha(bg, light ? 0.8 : 0.72)
-  readonly property color glassWell: alpha(text, light ? 0.07 : 0.06)
-  readonly property color glassEdge: alpha(text, light ? 0.16 : 0.11)
+  readonly property color glass: highContrast ? bg : alpha(bg, light ? 0.8 : 0.72)
+  readonly property color glassWell: alpha(text, highContrast ? 0.14 : light ? 0.07 : 0.06)
+  readonly property color glassEdge: highContrast ? text : alpha(text, light ? 0.16 : 0.11)
 
   // Type: Noto Sans for words, JetBrains Mono for numbers and glyphs.
   // FRIDAY's type (packaging/linux/fonts, OFL): Space Grotesk for text,

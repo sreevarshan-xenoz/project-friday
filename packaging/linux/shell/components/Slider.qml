@@ -8,12 +8,19 @@ Item {
   property real value: 0
   property string icon: ""
   property color fill: Theme.accent
+  // What it sets, for a screen reader ("Volume").
+  property string label: ""
   signal moved(real value)
   signal iconClicked()
 
   implicitHeight: 40
   implicitWidth: 240
   activeFocusOnTab: true
+  Accessible.role: Accessible.Slider
+  Accessible.name: root.label
+  Accessible.description: Math.round(root.value * 100) + "%"
+  Accessible.onIncreaseAction: root.moved(Math.min(1, root.value + 0.05))
+  Accessible.onDecreaseAction: root.moved(Math.max(0, root.value - 0.05))
   Keys.onLeftPressed: root.moved(Math.max(0, root.value - 0.05))
   Keys.onRightPressed: root.moved(Math.min(1, root.value + 0.05))
 

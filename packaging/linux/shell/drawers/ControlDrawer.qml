@@ -79,6 +79,7 @@ FocusScope {
       Layout.fillWidth: true
       visible: Audio.ready
       icon: Audio.icon()
+      label: Audio.muted ? "Volume, muted" : "Volume"
       value: Audio.volume
       fill: Audio.muted ? Theme.faint : Theme.accent
       onMoved: v => Audio.setVolume(v)
@@ -88,6 +89,7 @@ FocusScope {
       Layout.fillWidth: true
       visible: Brightness.ready
       icon: Icons.brightness
+      label: "Brightness"
       value: Brightness.value
       fill: Theme.signal
       onMoved: v => Brightness.set(v)
@@ -178,14 +180,15 @@ FocusScope {
             color: Theme.subtext
           }
         }
-        IconButton { icon: Icons.previous; size: 30; onClicked: if (root.player) root.player.previous() }
+        IconButton { tooltip: "Previous track"; icon: Icons.previous; size: 30; onClicked: if (root.player) root.player.previous() }
         IconButton {
+          tooltip: root.player && root.player.isPlaying ? "Pause" : "Play"
           icon: root.player && root.player.isPlaying ? Icons.pause : Icons.play
           size: 34
           active: true
           onClicked: if (root.player) root.player.togglePlaying()
         }
-        IconButton { icon: Icons.next; size: 30; onClicked: if (root.player) root.player.next() }
+        IconButton { tooltip: "Next track"; icon: Icons.next; size: 30; onClicked: if (root.player) root.player.next() }
       }
     }
 
@@ -202,6 +205,7 @@ FocusScope {
         font.letterSpacing: 1
       }
       IconButton {
+        tooltip: "Clear all notifications"
         visible: Notifs.list.length > 0
         icon: Icons.clearAll
         size: 28

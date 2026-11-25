@@ -150,6 +150,7 @@ FocusScope {
           }
         }
         IconButton {
+          tooltip: "Ask"
           icon: Icons.send
           size: 36
           iconSize: 18
@@ -259,12 +260,14 @@ FocusScope {
               }
             }
             IconButton {
+              tooltip: modelData.paused ? "Resume this task" : "Pause this task"
               icon: modelData.paused ? Icons.play : Icons.pause
               size: 28
               iconSize: 14
               onClicked: Tasks.setPaused(modelData.id, !modelData.paused)
             }
             IconButton {
+              tooltip: "Delete this task"
               icon: Icons.close
               size: 28
               iconSize: 14
@@ -333,8 +336,8 @@ FocusScope {
       Chip { icon: Icons.selection; text: "Selection"; onClicked: { Friday.askSelection(); root.done(); } }
       Chip { icon: Icons.screen; text: "Screen"; onClicked: { Friday.askScreen(); root.done(); } }
       Item { Layout.fillWidth: true }
-      IconButton { icon: Icons.history; size: 30; iconSize: 16; onClicked: { Friday.answers(); root.done(); } }
-      IconButton { icon: Icons.doctor; size: 30; iconSize: 16; onClicked: { Friday.doctor(); root.done(); } }
+      IconButton { tooltip: "Past answers"; icon: Icons.history; size: 30; iconSize: 16; onClicked: { Friday.answers(); root.done(); } }
+      IconButton { tooltip: "Check FRIDAY (doctor)"; icon: Icons.doctor; size: 30; iconSize: 16; onClicked: { Friday.doctor(); root.done(); } }
     }
 
     // The last answer.
@@ -373,6 +376,7 @@ FocusScope {
             font.pixelSize: Theme.fontS + 1
           }
           IconButton {
+            tooltip: "Copy"
             visible: Friday.lastDetail !== ""
             icon: Icons.copy
             size: 26

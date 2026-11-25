@@ -20,6 +20,10 @@ Rectangle {
   border.width: activeFocus ? 2 : 0
   border.color: Theme.text
   activeFocusOnTab: true
+  // What a screen reader says, and pressing it from one.
+  Accessible.role: Accessible.Button
+  Accessible.name: root.text
+  Accessible.onPressAction: root.clicked()
   Keys.onReturnPressed: root.clicked()
   Keys.onEnterPressed: root.clicked()
   Keys.onSpacePressed: root.clicked()

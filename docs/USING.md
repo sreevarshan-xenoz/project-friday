@@ -220,6 +220,10 @@ keyring (GNOME Keyring or KWallet, through `secret-tool`) and `friday secrets fi
 keyring that is still locked when FRIDAY starts leaves those providers out until you unlock it and
 restart FRIDAY (`systemctl --user restart friday-linux-daemon`).
 
+## Accessibility
+
+FRIDAY Shell works with a screen reader (Orca) and the keyboard: every button, switch, slider and Settings page says what it is and whether it's on, Tab moves between them, and Enter or Space presses them. For high contrast, `friday shell palette contrast` (or Super+N → Look) gives black, white text and edges, a yellow accent and no see-through glass; window borders follow it. `friday shell palette core` goes back.
+
 ## The launcher
 
 Click the grid in the bar. Type to find an app, one of FRIDAY's quick commands
