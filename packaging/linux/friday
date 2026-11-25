@@ -3630,7 +3630,7 @@ friday_forget() {
     [[ "$reply" =~ ^[Yy]$ ]] || { echo "Nothing deleted."; return 0; }
   fi
   if [ "$what" = answers ] || [ "$what" = all ]; then
-    rm -f "$state_dir/answers.md" "$state_dir/answers.1.md" "$state_dir/answers.lock" "$state_dir/last-answer.md" "$state_dir/ask-history"
+    rm -f "$state_dir/answers.md" "$state_dir/answers.1.md" "$state_dir/answers.lock" "$state_dir/last-answer.md" "$state_dir/last-memories" "$state_dir/ask-history"
     rm -rf "$state_dir/days"
     echo "Deleted ${n_answers:-0} saved answers and ${n_asks:-0} remembered questions."
   fi
@@ -3705,7 +3705,44 @@ friday_memory() {
       # Fuller than an ask carries: your AI provider proposes a shorter list;
       # `friday memory tidy apply` puts exactly that in place.
       friday-ctl memory tidy "${@:2}" ;;
-    *) echo "Usage: friday memory [list|edit|forget <words>|import <file> [--apply]|tidy [apply]]" >&2; return 2 ;;
+    used)
+      local mem_file="${XDG_STATE_HOME:-$HOME/.local/state}/friday/last-memories"
+      case "${2:-list}" in
+        list|"")
+          if [ ! -s "$mem_file" ]; then
+            echo "No remembered facts were used in the last answer."
+            return 0
+          fi
+          awk '{ print NR ". " $0 }' "$mem_file"
+          ;;
+        forget)
+          local n="${3:-}"
+          [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] || { echo "usage: friday memory used forget <n>" >&2; return 2; }
+          [ -s "$mem_file" ] || { echo "No remembered facts were used in the last answer." >&2; return 1; }
+          local fact
+          fact=$(sed -n "${n}p" "$mem_file")
+          [ -n "$fact" ] || { echo "No memory numbered $n in the last answer." >&2; return 1; }
+          # The card names the fact too: a list that moved since (a quick
+          # second click) forgets nothing.
+          if [ -n "${4:-}" ] && [ "$fact" != "$4" ]; then
+            echo "The list changed; nothing forgotten." >&2; return 1
+          fi
+          # Exactly that fact's line: "forget" by words could take others with it.
+          local f; f=$(friday_memory_file)
+          # Through the environment: awk -v would turn backslashes into escapes.
+          if L="- $fact" awk '$0 == ENVIRON["L"] { n++ } END { exit !n }' "$f" 2>/dev/null; then
+            L="- $fact" awk '$0 != ENVIRON["L"]' "$f" >"$f.tmp" && mv -f "$f.tmp" "$f"
+            echo "Forgot: $fact"
+          else
+            echo "\"$fact\" isn't in $f any more."
+          fi
+          sed "${n}d" "$mem_file" >"$mem_file.tmp" && mv -f "$mem_file.tmp" "$mem_file"
+          chmod 0600 "$mem_file" 2>/dev/null || true
+          ;;
+        *) echo "usage: friday memory used [forget <n> [the fact]]" >&2; return 2 ;;
+      esac
+      ;;
+    *) echo "Usage: friday memory [list|edit|forget <words>|import <file> [--apply]|tidy [apply]|used [forget <n>]]" >&2; return 2 ;;
   esac
 }
 
@@ -4180,6 +4217,7 @@ which-this|\"Explain this\" with nothing picked: ask whether it means the select
 dictation-cleanup|Speech drops \"um\" and \"uh\" and uses your own words (~/.config/friday/dictionary)
 propose-memories|\"I use fish …\" in a question: offer to remember it (nothing is kept unless you say so)
 memory-file|Every ask carries what you asked FRIDAY to remember (~/.config/friday/memory.md)
+memories-used|An answer shows which remembered facts shaped it, each with Forget
 live-web|Questions about the weather, news, scores or prices search the web without \"search\" first
 mcp-tools|Tools from MCP servers you switch on, each asked before it runs
 speak-as-it-comes|Spoken answers start with the first sentence while the rest is still coming
@@ -5654,7 +5692,7 @@ $offer"
       jq -n --arg mode "${ask_args[0]:-plain}" --argjson ok "$ans_ok" --argjson local "$local_only" \
         --argjson q "${#goal}" --argjson a "${#answer}" --argjson s "$shape" \
         '{mode: ($mode | ltrimstr("--")), ok: $ok, local: $local, served_by: ($s.served_by // null),
-          used: ($s.used // []), masked: ($s.masked // 0),
+          used: ($s.used // []), memories: (($s.memories // []) | length), masked: ($s.masked // 0),
           error: ($s.error // null | if . == null then null else (tostring | ascii_downcase |
             if test("timed out") then "timeout"
             elif test("429|rate.?limit|usage limit") then "rate_limited"
@@ -5665,6 +5703,15 @@ $offer"
             else "other" end) end),
           question_chars: $q, answer_chars: $a}' >"$state_dir/last-ask.json.tmp" 2>/dev/null \
         && mv -f "$state_dir/last-ask.json.tmp" "$state_dir/last-ask.json" || rm -f "$state_dir/last-ask.json.tmp"
+      # The remembered facts that shaped this answer, one per line.
+      local mem_file="$state_dir/last-memories"
+      (
+        umask 077
+        : >"$mem_file.tmp"
+        chmod 0600 "$mem_file.tmp" 2>/dev/null || true
+        jq -r '.memories[]? // empty' <<<"$shape" >"$mem_file.tmp" 2>/dev/null || : >"$mem_file.tmp"
+        mv -f "$mem_file.tmp" "$mem_file"
+      ) || true
 
       if [ -n "${ask_token:-}" ] && [ -z "${conf_clicked:-}" ] && [ -s "$state_dir/ask-newest" ] \
           && [ "$(cat "$state_dir/ask-newest" 2>/dev/null)" != "$ask_token" ]; then

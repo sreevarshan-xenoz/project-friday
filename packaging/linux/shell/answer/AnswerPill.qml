@@ -74,6 +74,7 @@ PanelWindow {
     Keys.onEscapePressed: Answer.close()
     opacity: Answer.visible ? 1 : Math.min(1, height / 40)
     property bool followUpOpen: false
+    property bool memoriesOpen: false
 
     HoverHandler { id: hover }
 
@@ -86,7 +87,7 @@ PanelWindow {
     }
     Connections {
       target: Answer
-      function onSerialChanged() { card.followUpOpen = false; followUp.text = ""; quiet.restart(); }
+      function onSerialChanged() { card.followUpOpen = false; card.memoriesOpen = false; followUp.text = ""; quiet.restart(); }
     }
 
     ColumnLayout {
@@ -217,6 +218,44 @@ PanelWindow {
           icon: Icons.restart
           text: "Try another model"
           onClicked: { Answer.tryAnother(); Answer.dismiss(); }
+        }
+        Chip {
+          // A finished answer's: never the last one's while a new one works.
+          visible: win.answering && Answer.memories.length > 0 && Config.featureOn("memories-used")
+          icon: Icons.memory
+          text: "Used " + Answer.memories.length + (Answer.memories.length === 1 ? " memory" : " memories")
+          primary: card.memoriesOpen
+          onClicked: { card.memoriesOpen = !card.memoriesOpen; }
+        }
+      }
+
+      ColumnLayout {
+        Layout.fillWidth: true
+        visible: win.answering && card.memoriesOpen && Answer.memories.length > 0 && Config.featureOn("memories-used")
+        spacing: 6
+
+        Repeater {
+          model: Answer.memories
+          RowLayout {
+            required property int index
+            required property string modelData
+            Layout.fillWidth: true
+            spacing: 8
+
+            Label {
+              Layout.fillWidth: true
+              text: modelData
+              color: Theme.subtext
+              font.pixelSize: Theme.fontS
+              elide: Text.ElideRight
+            }
+
+            Chip {
+              text: "Forget"
+              implicitHeight: 24
+              onClicked: Answer.forgetMemory(index)
+            }
+          }
         }
       }
 
