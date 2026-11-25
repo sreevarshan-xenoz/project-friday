@@ -133,6 +133,28 @@ impl Agent {
     }
 }
 
+/// The environment variables holding keys that `agent` doesn't get: every
+/// `…_API_KEY` and FRIDAY's provider keys, but its own vendor's key.
+fn keys_to_strip(agent: Agent, names: impl Iterator<Item = String>) -> Vec<String> {
+    let own: &[&str] = match agent {
+        Agent::Opencode => &["OPENCODE_API_KEY"],
+        Agent::Agy => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        Agent::Claude => &["ANTHROPIC_API_KEY"],
+        Agent::Codex => &["OPENAI_API_KEY", "CODEX_API_KEY"],
+    };
+    // Upper and lower case alike: Windows doesn't tell them apart.
+    names
+        .filter(|k| {
+            let up = k.to_ascii_uppercase();
+            (up.ends_with("_API_KEY")
+                || friday_intelligence::providers::PROVIDER_ENV_VARS
+                    .iter()
+                    .any(|(v, _)| *v == up))
+                && !own.contains(&up.as_str())
+        })
+        .collect()
+}
+
 /// Where a run is, as `friday agents` shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -896,6 +918,11 @@ pub async fn run_agent(
                 turn it on with `friday agents sandbox on` (Linux, needs bubblewrap)"
                     .into(),
             );
+        }
+        // FRIDAY's own provider keys aren't the agent's business; its own
+        // vendor's key it keeps.
+        for k in keys_to_strip(rec.run.agent, std::env::vars().map(|(k, _)| k)) {
+            command.env_remove(k);
         }
         // Claude Code says a session it no longer has on stderr: keep that.
         let claude = rec.run.agent == Agent::Claude;
@@ -2592,6 +2619,43 @@ mod tests {
         drop(acp);
         drop(lines);
         agent.await.unwrap();
+    }
+
+    #[test]
+    fn an_agent_gets_no_key_but_its_own_vendors() {
+        let names = [
+            "PATH",
+            "GROQ_API_KEY",
+            "GITHUB_TOKEN",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "HOME",
+        ]
+        .map(String::from);
+        let mut codex = keys_to_strip(Agent::Codex, names.clone().into_iter());
+        codex.sort();
+        assert_eq!(codex, ["ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GROQ_API_KEY"]);
+        let claude = keys_to_strip(Agent::Claude, names.clone().into_iter());
+        assert!(claude.contains(&"OPENAI_API_KEY".to_string()));
+        assert!(!claude.contains(&"ANTHROPIC_API_KEY".to_string()));
+        assert!(!claude.contains(&"PATH".to_string()));
+        // opencode and agy sign in with their own tools: FRIDAY's keys, and
+        // the GitHub token it uses for GitHub Models, aren't theirs.
+        for agent in [Agent::Opencode, Agent::Agy] {
+            let got = keys_to_strip(agent, names.clone().into_iter());
+            for k in [
+                "GROQ_API_KEY",
+                "GITHUB_TOKEN",
+                "OPENAI_API_KEY",
+                "ANTHROPIC_API_KEY",
+            ] {
+                assert!(got.contains(&k.to_string()), "{agent:?} kept {k}");
+            }
+        }
+        // Windows doesn't tell upper and lower case apart.
+        let mixed = ["groq_api_key", "Github_Token", "openai_api_key"].map(String::from);
+        let got = keys_to_strip(Agent::Codex, mixed.into_iter());
+        assert_eq!(got, ["groq_api_key", "Github_Token"]);
     }
 
     async fn follow_up_run(keeps: bool) -> (Vec<String>, Outcome, Run) {
