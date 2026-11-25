@@ -45,6 +45,7 @@ pub fn display_name(id: &str) -> String {
         "opencode-cli" => "OpenCode (its app)",
         "kilo" => "Kilo",
         "ovh" => "OVHcloud",
+        "apisfreellm" => "apisfreellm.com",
         "llamacpp" | "ollama" => "Local model",
         "gemini" => "Google Gemini",
         "groq" => "Groq",

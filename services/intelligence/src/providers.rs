@@ -96,8 +96,42 @@ fn public_tier_gate_open() -> bool {
 }
 
 /// The public free tiers a person may turn on (`friday free-tiers`).
-pub const PUBLIC_TIER_PROVIDERS: [&str; 5] =
-    ["openrouter", "groq", "cerebras", "gemini", "nvidia-nim"];
+pub const PUBLIC_TIER_PROVIDERS: [&str; 6] = [
+    "openrouter",
+    "groq",
+    "cerebras",
+    "gemini",
+    "nvidia-nim",
+    "apisfreellm",
+];
+
+/// apisfreellm.com's keyless, OpenAI-compatible endpoint: no account, no
+/// named operator, no terms; it logs each request's IP and reads the prompt.
+/// Registered only when the person lists it (`friday free-tiers on apisfreellm`).
+pub const APISFREELLM_BASE_URL: &str = "https://api.apisfreellm.com/v1";
+
+/// Register apisfreellm.com when it is listed as a public tier: one text
+/// model, `free-ai` (~35B, 32k context, 1 request a second per IP).
+fn register_listed_keyless(fabric: &mut InferenceFabric) {
+    if !fabric.public.contains("apisfreellm") {
+        return;
+    }
+    fabric.register_provider(Box::new(OpenAiProvider {
+        name: "apisfreellm".to_string(),
+        base_url: APISFREELLM_BASE_URL.to_string(),
+        api_key: "free".to_string(),
+    }));
+    fabric.register_model(ModelInfo {
+        id: "free-ai".to_string(),
+        family: "apisfreellm-free-ai".to_string(),
+        provider: "apisfreellm".to_string(),
+        latency_ms: 4_000,
+        reliability: 0.7,
+        capabilities: vec![],
+        max_context: 32_000,
+        tier: None,
+    });
+}
 
 /// The public free tiers the person listed, from `public-providers` in
 /// FRIDAY's config folder: one id a line, `!id` for one turned off (still
@@ -2739,6 +2773,9 @@ impl InferenceFabric {
             }
         }
 
+        // A keyless public tier the person listed (LAI-6).
+        register_listed_keyless(&mut fabric);
+
         // GitHub Copilot account-auth provider — the subscription seam. Opt-in
         // ONLY (`COPILOT_CLI_ENABLED=true|1`): `copilot`/`gh` are commonly on CI
         // and dev boxes, so a bare detection must never silently add a cloud
@@ -3295,6 +3332,7 @@ fn is_free_provider(name: &str) -> bool {
             | "runcrate"
             | "axforge"
             | "ovh"
+            | "apisfreellm"
     )
 }
 
@@ -5915,6 +5953,23 @@ mod tests {
         assert!(!public_tier_shut(false, true, false, false)); // guard off: every ask
         assert!(public_tier_shut(false, false, false, true)); // free-tiers off
         assert!(public_tier_shut(true, true, false, true)); // this tier turned off
+    }
+
+    /// apisfreellm.com is registered only when listed, never on its own.
+    #[test]
+    fn apisfreellm_is_registered_only_when_listed() {
+        let mut fabric = InferenceFabric::new();
+        register_listed_keyless(&mut fabric);
+        assert!(!fabric.providers.contains_key("apisfreellm"));
+        fabric.public.insert("apisfreellm".to_string());
+        register_listed_keyless(&mut fabric);
+        assert!(fabric.providers.contains_key("apisfreellm"));
+        assert!(fabric
+            .models
+            .iter()
+            .any(|m| m.provider == "apisfreellm" && m.id == "free-ai"));
+        assert!(!fabric.automatic.contains("apisfreellm"));
+        assert!(is_free_provider("apisfreellm"));
     }
 
     #[test]
