@@ -142,6 +142,14 @@ else
   ACCEL_OPT=(-accel "tcg,thread=multi" -cpu max)
 fi
 
+# The live system takes SSH keys only: hand it ours as a systemd credential
+# (vm-control.py logs in with the same key).
+VM_KEY="${FRIDAY_VM_KEY:-$HOME/.cache/friday-vm/ssh-key}"
+if [[ ! -f "$VM_KEY" ]]; then
+  mkdir -p "$(dirname "$VM_KEY")"
+  ssh-keygen -q -t ed25519 -N "" -C friday-test-vm -f "$VM_KEY"
+fi
+
 QEMU_CMD=(
   qemu-system-x86_64
   "${ACCEL_OPT[@]}"
@@ -154,6 +162,7 @@ QEMU_CMD=(
   -boot "order=$BOOT_ORDER"
   -netdev "user,id=net0,hostfwd=tcp::$SSH_PORT-:22"
   -device virtio-net-pci,netdev=net0
+  -smbios "type=11,value=io.systemd.credential.binary:ssh.authorized_keys.root=$(base64 -w0 "$VM_KEY.pub")"
   -chardev "socket,id=mon0,path=$MONITOR_SOCK,server=on,wait=off"
   -mon chardev=mon0,mode=readline
   "${VGA_OPT[@]}"

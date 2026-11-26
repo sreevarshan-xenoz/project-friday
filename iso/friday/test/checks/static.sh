@@ -328,6 +328,13 @@ grep -q '^pacstrap_with_retry /mnt base linux linux-firmware intel-ucode amd-uco
   && pass "installer installs CPU microcode" || fail "installer installs no CPU microcode"
 grep -q '^chmod 700 "/mnt$USER_HOME"' "$AIROOTFS/root/installer" \
   && pass "installer keeps the home folder private" || fail "installer leaves the home folder readable by everyone"
+# The live system's SSH: keys only, never an empty or any password.
+sshd_live="$AIROOTFS/etc/ssh/sshd_config.d/10-archiso.conf"
+if grep -qiE '^\s*(PermitEmptyPasswords\s+yes|PasswordAuthentication\s+yes|PermitRootLogin\s+yes)' "$sshd_live"; then
+  fail "the live ISO's sshd takes passwords (anyone on the network can log in as root)"
+else pass "the live ISO's sshd takes keys only"; fi
+grep -q 'ssh.authorized_keys.root=' "$PROFILE_DIR/test/install-test.sh" \
+  && pass "install-test hands the live system its key" || fail "install-test has no way into the live system"
 
 echo "Omarchy commands stay executable in the ISO"
 if [[ -x "$AIROOTFS/usr/share/omarchy/bin/omarchy-theme-set" ]]; then
