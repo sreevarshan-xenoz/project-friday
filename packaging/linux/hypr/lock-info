@@ -1,0 +1,25 @@
+#!/bin/sh
+# lock-info battery|media: one short line for FRIDAY's lock screen (friday
+# lock runs it from hyprlock every few seconds), or nothing at all. Kept tiny
+# and POSIX so each run costs a few milliseconds. The text is Pango markup,
+# so &, < and > are escaped.
+esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+case "$1" in
+  battery)
+    for b in /sys/class/power_supply/BAT*; do
+      [ -r "$b/capacity" ] || continue
+      c=$(cat "$b/capacity"); s=$(cat "$b/status" 2>/dev/null)
+      case "$s" in
+        Charging) echo "󰂄  $c%  charging" ;;
+        *) echo "󰁹  $c%" ;;
+      esac
+      exit 0
+    done ;;
+  media)
+    command -v playerctl >/dev/null 2>&1 || exit 0
+    [ "$(playerctl status 2>/dev/null)" = Playing ] || exit 0
+    t=$(playerctl metadata title 2>/dev/null); a=$(playerctl metadata artist 2>/dev/null)
+    [ -n "$t" ] || exit 0
+    printf '󰎈  %s%s\n' "$t" "${a:+  ·  $a}" | esc ;;
+esac
+exit 0
