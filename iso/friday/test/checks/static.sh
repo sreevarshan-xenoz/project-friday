@@ -116,7 +116,7 @@ else skip "window look verification (needs Hyprland, jq)"; fi
 own_line=$(grep -n 'chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/friday"' "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
 style_line=$(grep -n "friday shell style '\$SHELL_STYLE_ID'" "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
 if [[ -n "$own_line" && -n "$style_line" ]] && (( own_line < style_line )) \
-   && grep -q '"style": "%s"' "$AIROOTFS/root/installer"; then
+   && grep -q 'jq -n --arg style "$SHELL_STYLE_ID"' "$AIROOTFS/root/installer"; then
   pass "installer saves the chosen style and writes the window look as the user"
 else
   fail "installer doesn't save the style, or runs friday shell style before the user owns ~/.config/friday"
@@ -290,11 +290,28 @@ grep -q 'Dots-Hyprland' "$AIROOTFS/root/configurator" \
   && pass "end-4 Dots-Hyprland is still offered" || fail "end-4 Dots-Hyprland option is gone"
 grep -q 'o.exec_on_start("friday shell")' "$AIROOTFS/etc/skel/.config/hypr/autostart.lua" \
   && pass "Hyprland autostarts FRIDAY Shell" || fail "Hyprland does not start FRIDAY Shell"
-grep -q '.bar.id = "friday.bar"' "$AIROOTFS/root/installer" && grep -q 'omarchy.notifications' "$AIROOTFS/root/installer" \
-  && pass "installer turns off Omarchy's bar and notifications" || fail "installer leaves Omarchy's bar or notifications on"
+# FRIDAY does what Omarchy's shell did; Omarchy's shell doesn't start.
+grep -q '^omarchy_shell = false' "$AIROOTFS/etc/skel/.config/hypr/hyprland.lua" \
+  && grep -q 'if _G.omarchy_shell ~= false then' "$PROFILE_DIR/omarchy-patches/0005-friday-own-shell.patch" \
+  && pass "Omarchy's shell is switched off (hyprland.lua + patch 0005)" || fail "Omarchy's shell still starts"
+for c in "friday wallpaper show" "friday idle"; do
+  grep -q "o.exec_on_start(\"$c\")" "$AIROOTFS/etc/skel/.config/hypr/autostart.lua" \
+    && pass "Hyprland autostarts $c" || fail "Hyprland does not start $c"
+done
+grep -q 'o.bind("SUPER + L", "Lock", "friday lock"' "$AIROOTFS/etc/skel/.config/hypr/bindings.lua" \
+  && pass "Super+L locks with friday lock" || fail "Super+L doesn't run friday lock"
+if grep -n 'omarchy-shell \|omarchy-menu \|omarchy-system-lock' "$AIROOTFS/etc/skel/.config/hypr/bindings.lua"; then
+  fail "a key still calls Omarchy's shell, which doesn't run"
+else pass "no key calls Omarchy's shell"; fi
+for p in hyprlock hypridle swaybg; do
+  grep -qw "$p" "$AIROOTFS/root/installer" && pass "installer installs $p" || fail "installer does not install $p"
+done
 if need jq; then
-  expect "friday.bar manifest is valid JSON" jq -e '.id == "friday.bar" and (.kinds | index("bar"))' \
-    "$REPO_ROOT/friday-os/plugins/friday.bar/manifest.json"
+  # The installer's FRIDAY Shell settings: polkit on, the theme's wallpaper.
+  line=$(grep -A2 'jq -n --arg style "$SHELL_STYLE_ID"' "$AIROOTFS/root/installer" | sed -n "s/^ *'\(.*\)' \\\\$/\1/p")
+  out=$(jq -nc --arg style lean --arg palette core --arg wp /usr/share/friday/wallpapers/core/a.jpg "$line" 2>&1)
+  [[ "$out" == '{"style":"lean","palette":"core","polkit":true,"wallpaper":"/usr/share/friday/wallpapers/core/a.jpg"}' ]] \
+    && pass "installer turns on FRIDAY's password prompt and wallpaper" || fail "installer's shell.json: $out"
 fi
 grep -q 'OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:\\$PATH omarchy-theme-set' "$AIROOTFS/root/installer" \
   && pass "installer runs omarchy-theme-set with Omarchy's environment" \
@@ -305,18 +322,6 @@ if [[ -n "$chown_line" && -n "$theme_line" ]] && (( chown_line < theme_line )); 
   pass "installer hands the home to the user before the theme step"
 else
   fail "installer runs omarchy-theme-set before the user owns their home (theme silently not applied)"
-fi
-grep -q 'friday-os/plugins/friday.bar' "$PROFILE_DIR/build-iso.sh" \
-  && pass "build-iso.sh ships the friday.bar plugin" || fail "build-iso.sh does not ship friday.bar"
-grep -q 'friday-os/plugins/friday.lock' "$PROFILE_DIR/build-iso.sh" \
-  && pass "build-iso.sh ships the friday.lock plugin" || fail "build-iso.sh does not ship friday.lock"
-grep -q 'omarchy-apply-lock' "$AIROOTFS/root/installer" \
-  && pass "installer sets up the lock screen's PAM service" || fail "installer never writes /etc/pam.d/omarchy-lock-password (the lock screen refuses to lock)"
-grep -q '"omarchy.lock"' "$AIROOTFS/root/installer" \
-  && pass "installer turns off Omarchy's lock screen for friday.lock" || fail "installer leaves omarchy.lock on next to friday.lock"
-if need jq; then
-  expect "friday.lock manifest is valid JSON" jq -e '.id == "friday.lock" and (.kinds | index("service"))' \
-    "$REPO_ROOT/friday-os/plugins/friday.lock/manifest.json"
 fi
 
 echo "Omarchy commands stay executable in the ISO"

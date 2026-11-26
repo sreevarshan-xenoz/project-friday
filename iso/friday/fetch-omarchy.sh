@@ -74,14 +74,9 @@ for p in "${PATCHES[@]}"; do
   log "applied ${p##*/}"
 done
 
-# Replace the tree but keep FRIDAY's own plugins, which build-iso.sh copies
-# in from friday-os/plugins/ afterwards anyway.
+# Replace the whole tree (FRIDAY OS adds nothing inside it any more).
 mkdir -p "$DEST"
-find "$DEST" -mindepth 1 -maxdepth 1 ! -name shell -exec rm -rf {} +
-if [[ -d "$DEST/shell" ]]; then
-  find "$DEST/shell" -mindepth 1 -maxdepth 1 ! -name plugins -exec rm -rf {} +
-  find "$DEST/shell/plugins" -mindepth 1 -maxdepth 1 ! -name 'friday.*' -exec rm -rf {} + 2>/dev/null || true
-fi
+find "$DEST" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 tar -C "$CACHE" --exclude=.git -cf - . | tar -C "$DEST" -xf -
 echo "$WANT" > "$STAMP"
 log "staged ${OMARCHY_REF:0:8} into $DEST"

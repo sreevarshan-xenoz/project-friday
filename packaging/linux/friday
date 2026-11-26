@@ -161,6 +161,9 @@ Desktop & System Substrate:
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
   friday shell style [name]        Shell style: ember, lean, island, dock (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
+  friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
+  friday lock                      Lock the screen (hyprlock in FRIDAY's colours)
+  friday idle                      Dim, lock and turn the screen off when idle (hypridle)
   friday theme [list|set <name>]   Switch desktop visual theme (22 available)
   friday bar [toggle|reload]       Configure Quickshell bar and widgets
   friday update                    Update system and OS components
@@ -265,6 +268,195 @@ shell_window_look() {
     echo "}"
   } >"${conf%/*}/niri-look.kdl.tmp" && mv -f "${conf%/*}/niri-look.kdl.tmp" "${conf%/*}/niri-look.kdl"
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then hyprctl reload >/dev/null 2>&1 || true; fi
+}
+
+# FRIDAY OS's own desktop pieces, the jobs Omarchy's shell used to do:
+# the wallpaper (shell.json "wallpaper", drawn by swaybg: 15 MB, where
+# drawing it in FRIDAY Shell cost ~90 MB), the lock screen (hyprlock in
+# FRIDAY's colours) and going idle (hypridle).
+friday_wallpapers_dir=/usr/share/friday/wallpapers
+
+# Draw shell.json's wallpaper with swaybg, or none if it has none. The new
+# swaybg starts before the old one stops, so the desktop never flashes bare.
+friday_wallpaper_show() {
+  local conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json" f old pidfile
+  pidfile="${XDG_RUNTIME_DIR:-/tmp}/friday-wallpaper-$(id -u).pid"
+  # One change at a time (Super+Ctrl+T pressed quickly), so no swaybg is lost.
+  exec 9>"$pidfile.lock"; flock 9
+  f=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
+  old=$(cat "$pidfile" 2>/dev/null || true)
+  if [ -n "$f" ] && [ -f "$f" ] && command -v swaybg >/dev/null 2>&1; then
+    # (9>&-: swaybg mustn't hold the lock for its whole life.)
+    swaybg -m fill -i "$f" >/dev/null 2>&1 </dev/null 9>&- &
+    echo $! >"$pidfile"
+    disown 2>/dev/null || true
+    sleep 0.3
+  else
+    rm -f "$pidfile"
+  fi
+  if [ -n "$old" ] && [ "$(cat "/proc/$old/comm" 2>/dev/null)" = swaybg ]; then kill "$old" 2>/dev/null || true; fi
+  exec 9>&-
+}
+
+# `friday wallpaper [current|list|next|show|off|<image>]`.
+friday_wallpaper() {
+  local conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json" cur f next="" take=0
+  cur=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
+  case "${1:-current}" in
+    current) if [ -n "$cur" ]; then echo "$cur"; else echo "No FRIDAY wallpaper set (friday wallpaper <image> sets one)."; fi; return 0 ;;
+    list) find "$friday_wallpapers_dir" -type f \( -name '*.jpg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null | sort; return 0 ;;
+    show) friday_wallpaper_show; return 0 ;;
+    off) f="" ;;
+    next)
+      # The one after the current, in list order, round to the first.
+      while IFS= read -r f; do
+        [ -z "$next" ] && next=$f
+        if [ "$take" = 1 ]; then next=$f; break; fi
+        [ "$f" = "$cur" ] && take=1
+      done < <(friday_wallpaper list)
+      [ -n "$next" ] || { echo "friday: no wallpapers in $friday_wallpapers_dir" >&2; return 1; }
+      f=$next ;;
+    *)
+      f=$(realpath -e -- "$1" 2>/dev/null) || { echo "friday: no such image: $1" >&2; return 1; }
+      [ -f "$f" ] || { echo "friday: not an image file: $1" >&2; return 1; } ;;
+  esac
+  mkdir -p "$(dirname "$conf")"
+  local tmp; tmp=$(mktemp "$conf.XXXXXX")
+  if ! jq --arg v "$f" 'if $v == "" then del(.wallpaper) else .wallpaper = $v end' "$conf" >"$tmp" 2>/dev/null; then
+    jq -n --arg v "$f" 'if $v == "" then {} else {wallpaper: $v} end' >"$tmp"
+  fi
+  mv -f "$tmp" "$conf"
+  friday_wallpaper_show
+  if [ -n "$f" ]; then echo "Wallpaper: $f"; else echo "FRIDAY no longer sets a wallpaper."; fi
+}
+
+# One colour from FRIDAY Shell's palette, as Theme.qml defines it: $1 =
+# palette, $2 = key (bg, text, accent, ...). Prints the hex without "#".
+friday_palette_colour() {
+  local theme="${FRIDAY_SHELL_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell}/common/Theme.qml"
+  [ -f "$theme" ] || theme=/usr/share/friday/shell/common/Theme.qml
+  sed -n "/readonly property var $1: ({/,/})/p" "$theme" 2>/dev/null \
+    | sed -n "s/^ *$2: \"#\([0-9a-fA-F]\{6\}\)\".*/\1/p" | head -1
+}
+
+# hyprlock's config in FRIDAY's colours, on the blurred wallpaper: a big
+# clock, the date, your picture (~/.face) if you have one, the password
+# field. Written fresh on each lock, so it follows the palette and wallpaper.
+friday_lock_conf() {
+  local conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json" out palette wp k
+  local bg text subtext accent signal error warn facepam="${FRIDAY_FACE_PAM:-/etc/pam.d/friday-lock-face}"
+  out="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hyprlock.conf"
+  palette=$(jq -r '.palette // "core"' "$conf" 2>/dev/null || echo core)
+  case "$palette" in friday) palette=ember ;; core|ember|polar|frost|moss|dawn|contrast) ;; *) palette=core ;; esac
+  for k in bg text subtext accent signal error warn; do
+    printf -v "$k" '%s' "$(friday_palette_colour "$palette" "$k")"
+  done
+  [ -n "$bg" ] || { bg=111318 text=dde0e6 subtext=b8bbc3 accent=d42d51 signal=8ea4c8 error=ff5d6c warn=e8b04f; }
+  wp=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
+  # Paths go into hyprlang, where "#" starts a comment ("##" is a literal
+  # one) and a line can't be split: escape the first, skip paths with the second.
+  local face="$HOME/.face" nl=$'\n'
+  [ -f "$wp" ] && [[ "$wp" != *"$nl"* ]] || wp=""
+  [ -f "$face" ] && [[ "$face" != *"$nl"* ]] || face=""
+  wp=${wp//#/##}; face=${face//#/##}
+  # The password field sits under your picture, or closer to the date without one.
+  local field_y=-60
+  [ -n "$face" ] && field_y=-150
+  mkdir -p "$(dirname "$out")"
+  {
+    echo "# FRIDAY's lock screen (palette: $palette). Written by \`friday lock\` on"
+    echo "# every lock; edits are replaced. To use your own, lock with hyprlock directly."
+    echo "general {"
+    echo "    hide_cursor = true"
+    echo "    ignore_empty_input = true"
+    echo "}"
+    # Face unlock (friday face setup): its PAM service tries the face, then the
+    # password. An older one without the password fallback is left unused.
+    if grep -qs '^auth include hyprlock' "$facepam"; then
+      echo "auth {"
+      echo "    pam:module = ${facepam##*/}"
+      echo "}"
+    fi
+    echo "animations {"
+    echo "    enabled = true"
+    echo "    bezier = out, 0.33, 1, 0.68, 1"
+    echo "    animation = fadeIn, 1, 4, out"
+    echo "    animation = fadeOut, 1, 4, out"
+    echo "    animation = inputFieldDots, 1, 2, out"
+    echo "}"
+    echo "background {"
+    echo "    monitor ="
+    if [ -n "$wp" ]; then echo "    path = $wp"; fi
+    echo "    color = rgb($bg)"
+    echo "    blur_passes = 3"
+    echo "    blur_size = 6"
+    echo "    brightness = 0.6"
+    echo "}"
+    echo "label {"
+    echo "    monitor ="
+    echo "    text = \$TIME"
+    echo "    color = rgb($text)"
+    echo "    font_size = 96"
+    echo "    font_family = Michroma"
+    echo "    position = 0, 170"
+    echo "    halign = center"
+    echo "    valign = center"
+    echo "}"
+    echo "label {"
+    echo "    monitor ="
+    echo "    text = cmd[update:60000] date +\"%A, %d %B\""
+    echo "    color = rgb($subtext)"
+    echo "    font_size = 20"
+    echo "    font_family = Space Grotesk"
+    echo "    position = 0, 50"
+    echo "    halign = center"
+    echo "    valign = center"
+    echo "}"
+    if [ -n "$face" ]; then
+      echo "image {"
+      echo "    monitor ="
+      echo "    path = $face"
+      echo "    size = 104"
+      echo "    rounding = -1"
+      echo "    border_size = 2"
+      echo "    border_color = rgb($accent) rgb($signal) 45deg"
+      echo "    position = 0, -40"
+      echo "    halign = center"
+      echo "    valign = center"
+      echo "}"
+    fi
+    echo "input-field {"
+    echo "    monitor ="
+    echo "    size = 320, 52"
+    echo "    outline_thickness = 2"
+    echo "    rounding = 26"
+    echo "    inner_color = rgba(${bg}cc)"
+    echo "    outer_color = rgb($accent) rgb($signal) 45deg"
+    echo "    check_color = rgb($signal)"
+    echo "    fail_color = rgb($error)"
+    echo "    capslock_color = rgb($warn)"
+    echo "    font_color = rgb($text)"
+    echo "    font_family = Space Grotesk"
+    echo "    fade_on_empty = false"
+    echo "    placeholder_text = <span foreground=\"##$subtext\">Password</span>"
+    echo "    fail_text = <i>\$PAMFAIL</i>"
+    echo "    dots_spacing = 0.3"
+    echo "    position = 0, $field_y"
+    echo "    halign = center"
+    echo "    valign = center"
+    echo "}"
+    echo "label {"
+    echo "    monitor ="
+    echo "    text = FRIDAY  ·  \$USER"
+    echo "    color = rgb($accent)"
+    echo "    font_size = 13"
+    echo "    font_family = Michroma"
+    echo "    position = 0, 40"
+    echo "    halign = center"
+    echo "    valign = bottom"
+    echo "}"
+  } >"$out.tmp" && mv -f "$out.tmp" "$out"
+  echo "$out"
 }
 
 # Whether FRIDAY Shell should draw in software: FRIDAY_SHELL_RENDER=software,
@@ -1466,11 +1658,12 @@ friday_confirm_typed() {
 }
 
 # `friday welcome`: one-time first-login greeting (autostarted by Hyprland).
-# Face unlock for the lock screen (friday.lock), with Gaze: on-device face
+# Face unlock for the lock screen (friday lock), with Gaze: on-device face
 # recognition with a liveness check (gaze.gundulabs.com, GPL-3.0). Gaze is in
 # the AUR, not the Arch repos, so it's built here from the AUR package on
-# request. The lock screen runs its face flow when /etc/pam.d/friday-lock-face
-# exists; sudo and password prompts use it only if you say so. Lines FRIDAY
+# request. /etc/pam.d/friday-lock-face tries the face, then hyprlock's own
+# password stack; friday lock uses it when it exists. sudo and password
+# prompts use the face only if you say so. Lines FRIDAY
 # adds to other PAM files carry "# friday face" so remove takes only those.
 friday_face() {
   local pam=/etc/pam.d/friday-lock-face mark="# friday face"
@@ -1508,7 +1701,7 @@ EOF
       sudo systemctl enable --now gazed || return 1
       echo; echo "Now Gaze learns your face. Look at the camera and follow its prompts."
       gaze add-face || { echo "friday: face enrolment did not finish; run friday face setup again" >&2; return 1; }
-      printf '%s\nauth required pam_gaze.so\n' "# FRIDAY lock screen: face unlock (friday face setup)" | sudo tee "$pam" >/dev/null || return 1
+      printf '%s\nauth sufficient pam_gaze.so\nauth include hyprlock\n' "# FRIDAY lock screen: face, else password (friday face setup)" | sudo tee "$pam" >/dev/null || return 1
       if ! $yes; then
         read -r -p "Also use your face for sudo and password prompts? [y/N] " a
         if [[ "$a" =~ ^[Yy] ]]; then
@@ -6918,6 +7111,24 @@ $offer"
     shift
     exec friday-ctl context "$@"
     ;;
+  wallpaper)
+    shift; friday_wallpaper "$@"; exit $?
+    ;;
+  lock)
+    command -v hyprlock >/dev/null 2>&1 || { echo "friday: hyprlock is not installed" >&2; exit 1; }
+    # Never two lock screens (this user's: another user's hyprlock doesn't lock this session).
+    pgrep -u "$(id -u)" -x hyprlock >/dev/null 2>&1 && exit 0
+    conf=$(friday_lock_conf)
+    exec hyprlock -c "$conf"
+    ;;
+  idle)
+    command -v hypridle >/dev/null 2>&1 || { echo "friday: hypridle is not installed" >&2; exit 1; }
+    pgrep -u "$(id -u)" -x hypridle >/dev/null 2>&1 && { echo "hypridle is already running"; exit 0; }
+    # Your own ~/.config/friday/hypridle.conf, else FRIDAY's.
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hypridle.conf"
+    [ -f "$conf" ] || conf=/usr/share/friday/hypr/hypridle.conf
+    exec hypridle -c "$conf"
+    ;;
   shell)
     # FRIDAY Shell. A copy in ~/.config/friday/shell (or $FRIDAY_SHELL_DIR)
     # takes precedence over the packaged one, for people who want to edit it.
@@ -6966,10 +7177,11 @@ $offer"
           *) echo "friday: no $key '$1' (choose one of: $opts)" >&2; exit 1 ;;
         esac
         mkdir -p "$(dirname "$conf")"
-        if ! jq --arg k "$key" --arg v "$1" '.[$k] = $v' "$conf" >"$conf.tmp" 2>/dev/null; then
-          jq -n --arg k "$key" --arg v "$1" '{($k): $v}' >"$conf.tmp"
+        tmp=$(mktemp "$conf.XXXXXX")
+        if ! jq --arg k "$key" --arg v "$1" '.[$k] = $v' "$conf" >"$tmp" 2>/dev/null; then
+          jq -n --arg k "$key" --arg v "$1" '{($k): $v}' >"$tmp"
         fi
-        mv -f "$conf.tmp" "$conf"
+        mv -f "$tmp" "$conf"
         shell_window_look
         echo "FRIDAY Shell $key: $1" ;;
       close)   exec quickshell -p "$dir" ipc call shell close ;;

@@ -42,6 +42,9 @@ optdepends=(
   'ttf-jetbrains-mono-nerd: FRIDAY Shell icons'
   "noto-fonts: characters FRIDAY's own fonts lack"
   'brightnessctl: brightness slider in FRIDAY Shell'
+  'hyprlock: the lock screen (friday lock)'
+  'hypridle: dim, lock and screen off when idle (friday idle)'
+  'swaybg: the desktop wallpaper (friday wallpaper)'
   'networkmanager: network status in FRIDAY Shell'
   'friday-mobile: pair a phone (friday phone) and answer FRIDAY from it'
   'fd: file search in the FRIDAY Shell launcher'
@@ -130,6 +133,7 @@ package() {
   install -Dm644 "$lin/fonts/"*.ttf -t "$pkgdir/usr/share/fonts/friday"
   install -Dm644 "$lin/fonts/"OFL-*.txt -t "$pkgdir/usr/share/licenses/$pkgname"
   install -Dm644 "$lin/hyprland/friday.lua" -t "$pkgdir/usr/share/friday/hyprland"
+  install -Dm644 "$lin/hypr/hypridle.conf" -t "$pkgdir/usr/share/friday/hypr"
   install -Dm644 "$lin/niri/friday.kdl" -t "$pkgdir/usr/share/friday/niri"
   # App bundles for `friday bundles` (the first-login tour offers them).
   install -Dm644 "$lin"/bundles/* -t "$pkgdir/usr/share/friday/bundles"

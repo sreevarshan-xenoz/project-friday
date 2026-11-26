@@ -20,7 +20,13 @@ import Quickshell.Io
 //                               // name "omarchy" = "classic".
 //     "clock24h": true,
 //     "workspaces": 5,          // workspace slots always shown in the bar
-//     "notificationTimeout": 6  // seconds; FRIDAY's own answers stay longer
+//     "notificationTimeout": 6, // seconds; FRIDAY's own answers stay longer
+//     "wallpaper": "/usr/share/friday/wallpapers/core/...jpg",
+//                               // the desktop wallpaper, which `friday wallpaper`
+//                               // sets and swaybg draws (FRIDAY OS); unset = your
+//                               // own tool does; the lock screen shows it too
+//     "polkit": true            // FRIDAY Shell asks for administrator passwords
+//                               // (FRIDAY OS); off = your desktop's agent does
 //   }
 Singleton {
   id: root
@@ -41,6 +47,7 @@ Singleton {
   readonly property bool clock24h: pick("clock24h", true) === true
   readonly property int workspaces: Math.max(1, Math.min(10, Number(pick("workspaces", 5)) || 5))
   readonly property int notificationTimeout: Math.max(2, Number(pick("notificationTimeout", 6)) || 6)
+  readonly property bool polkit: pick("polkit", false) === true
 
   function pick(key, fallback) {
     const v = root.settings[key];

@@ -37,12 +37,11 @@ o.bind("SUPER + ALT + comma", "Invoke last notification", "friday shell ipc noti
 o.bind("SUPER + CTRL + comma", "Toggle do not disturb", "friday shell ipc notifications toggleDnd")
 
 -- Tools
-o.bind("SUPER + V", "Clipboard history", "omarchy-shell shell toggle omarchy.clipboard")
-o.bind("SUPER + period", "Emojis", "omarchy-shell shell toggle omarchy.emojis")
-o.bind("SUPER + CTRL + T", "Wallpapers", "omarchy-menu toggle background")
+o.bind("SUPER + V", "Clipboard history", "friday clips pick")
+o.bind("SUPER + CTRL + T", "Next wallpaper", "friday wallpaper next")
 o.bind("SUPER + SHIFT + C", "Colour picker", "pkill hyprpicker || hyprpicker -a")
 o.bind("SUPER + SHIFT + S", "Screenshot", "omarchy-capture-screenshot")
-o.bind("SUPER + SHIFT + R", "Screen recording", "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord")
+o.bind("SUPER + SHIFT + R", "Screen recording", "omarchy-capture-screenrecording --stop-recording || omarchy-capture-screenrecording")
 local grab = "grim -o \"$(hyprctl activeworkspace -j | jq -r '.monitor')\""
 o.bind("Print", "Copy this screen", grab .. " - | wl-copy", { locked = true })
 o.bind("CTRL + Print", "Save this screen to Pictures/Screenshots",
@@ -140,7 +139,7 @@ hl.config({
 })
 
 -- Session
-o.bind("SUPER + L", "Lock", "omarchy-system-lock", { locked = true })
+o.bind("SUPER + L", "Lock", "friday lock", { locked = true })
 o.bind("SUPER + SHIFT + L", "Suspend", "systemctl suspend", { locked = true })
 o.bind("SUPER + ALT + L", "Suspend", "systemctl suspend", { locked = true })
 o.bind("CTRL + SHIFT + ALT + SUPER + Delete", "Power off", "systemctl poweroff")
@@ -151,7 +150,6 @@ o.bind("SUPER + T", "Terminal", { omarchy = "terminal" })
 o.bind("CTRL + ALT + T", "Terminal", { omarchy = "terminal" })
 o.bind("SUPER + E", "Files", { omarchy = "nautilus" })
 o.bind("SUPER + W", "Browser", { omarchy = "browser" })
-o.bind("CTRL + SUPER + V", "Sound", "omarchy-shell shell toggle omarchy.audio")
 o.bind("CTRL + SHIFT + Escape", "Task manager", { tui = "btop" })
 
 -- Add your own below. Change a key by unbinding it first:

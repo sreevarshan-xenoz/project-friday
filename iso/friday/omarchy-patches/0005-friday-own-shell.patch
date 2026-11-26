@@ -1,0 +1,16 @@
+diff --git a/default/hypr/autostart.lua b/default/hypr/autostart.lua
+--- a/default/hypr/autostart.lua
++++ b/default/hypr/autostart.lua
+@@ -3,7 +3,11 @@
+   hl.exec_cmd("systemctl --user import-environment $(env | cut -d'=' -f 1)")
+   hl.exec_cmd("dbus-update-activation-environment --systemd --all")
+ 
+-  hl.exec_cmd("omarchy-launch-shell")
++  -- FRIDAY OS: FRIDAY Shell and FRIDAY's wallpaper, lock and idle replace
++  -- Omarchy's shell when the user config sets omarchy_shell = false.
++  if _G.omarchy_shell ~= false then
++    hl.exec_cmd("omarchy-launch-shell")
++  end
+   hl.exec_cmd("omarchy-provision-first-run")
+   hl.exec_cmd("omarchy-powerprofiles-init")
+   hl.exec_cmd(o.launch("omarchy-hyprland-monitor-watch"))

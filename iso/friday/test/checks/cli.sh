@@ -2842,6 +2842,51 @@ else pass "the classic palette leaves border colours to the desktop theme"; fi
 contains "the old palette name is saved as classic" "$(cat "$HOME/.config/friday/shell.json")" '"palette": "classic"'
 rm -f "$S/hyprctl"
 rm -f "$S/quickshell"
+# FRIDAY OS's own desktop: the wallpaper (swaybg), lock screen (hyprlock) and idle.
+dk_env=(env FRIDAY_SHELL_DIR="$REPO_ROOT/packaging/linux/shell" XDG_RUNTIME_DIR="$SH/run")
+# (A script, so its process is named swaybg; TERM ends it at once.)
+printf '#!/bin/bash\necho "swaybg $*" >> %q\ntrap '"'"'kill $! 2>/dev/null; exit'"'"' TERM\nsleep 30 & wait\n' "$LOG" >"$S/swaybg"; chmod +x "$S/swaybg"
+printf '#!/bin/bash\necho "hyprlock $*" >> %q\n' "$LOG" >"$S/hyprlock"; chmod +x "$S/hyprlock"
+# No hyprlock of this user's running (the real pgrep could see the tester's own).
+printf '#!/bin/bash\nexit 1\n' >"$S/pgrep"; chmod +x "$S/pgrep"
+img="$HOME/wall one.jpg"; : >"$img"; : >"$HOME/wall-two.jpg"
+echo '{ "palette": "polar" }' >"$HOME/.config/friday/shell.json"
+: >"$LOG"; "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null
+contains "friday wallpaper saves the image in shell.json" "$(cat "$HOME/.config/friday/shell.json")" "\"wallpaper\": \"$img\""
+contains "and swaybg draws it" "$(cat "$LOG")" "swaybg -m fill -i $img"
+contains "other settings are kept" "$(cat "$HOME/.config/friday/shell.json")" '"palette": "polar"'
+first=$(cat "$SH/run/friday-wallpaper-$(id -u).pid" 2>/dev/null)
+"${dk_env[@]}" bash "$F" wallpaper "$HOME/wall-two.jpg" >/dev/null
+second=$(cat "$SH/run/friday-wallpaper-$(id -u).pid" 2>/dev/null)
+# Running = there and not a zombie (CI's container never reaps orphans), given a moment to exit.
+dk_alive() { local st; st=$(awk '{print $3}' "/proc/$1/stat" 2>/dev/null) && [[ -n $st && $st != Z ]]; }
+dk_gone() { local i; for i in 1 2 3 4 5 6 7 8 9 10; do dk_alive "$1" || return 0; sleep 0.2; done; return 1; }
+if [[ -n "$first" && "$first" != "$second" ]] && dk_gone "$first" && dk_alive "$second"; then
+  pass "a new wallpaper replaces the old swaybg"
+else fail "swaybg after a second wallpaper: old $first, new $second"; fi
+if "${dk_env[@]}" bash "$F" wallpaper "$HOME/no-such.jpg" >/dev/null 2>&1; then fail "a missing image was accepted"
+else pass "a missing image is refused"; fi
+"${dk_env[@]}" bash "$F" wallpaper off >/dev/null
+if grep -q wallpaper "$HOME/.config/friday/shell.json" || ! dk_gone "$second"; then fail "wallpaper off left it set or drawn"
+else pass "wallpaper off clears it and stops swaybg"; fi
+"${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null
+: >"$LOG"; "${dk_env[@]}" bash "$F" lock
+lock="$HOME/.config/friday/hyprlock.conf"
+contains "friday lock runs hyprlock with FRIDAY's config" "$(cat "$LOG")" "hyprlock -c $lock"
+contains "in the palette's colours (polar accent)" "$(cat "$lock")" "outer_color = rgb(88c0d0)"
+contains "on the wallpaper" "$(cat "$lock")" "path = $img"
+# hyprlang reads "#" as a comment: a wallpaper named with one is escaped.
+hash="$HOME/wall #2.jpg"; : >"$hash"
+"${dk_env[@]}" bash "$F" wallpaper "$hash" >/dev/null; "${dk_env[@]}" bash "$F" lock
+contains "a \"#\" in the wallpaper's name is escaped for hyprlock" "$(cat "$lock")" "path = $HOME/wall ##2.jpg"
+# Two quick changes (Super+Ctrl+T held) leave exactly one swaybg.
+# (Each within 10 s: a lock held by swaybg would stall the second for good.)
+timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null & timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$HOME/wall-two.jpg" >/dev/null; wait
+s0=$SECONDS; timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null
+(( SECONDS - s0 < 5 )) && pass "a wallpaper change doesn't wait on the running swaybg" || fail "a wallpaper change waited $((SECONDS - s0)) s (swaybg holds the lock)"
+n=0; for p in $(ps -eo pid=,args= | awk -v b="$S/swaybg" '$2 == "/bin/bash" && $3 == b {print $1}'); do dk_alive "$p" && n=$((n+1)); done
+[[ $n == 1 ]] && pass "quick wallpaper changes leave one swaybg" || fail "quick changes left $n swaybg running"
+"${dk_env[@]}" bash "$F" wallpaper off >/dev/null; rm -f "$S/swaybg" "$S/hyprlock" "$S/pgrep"
 
 echo "doctor"
 printf '{"status":"running","token":"s3cret-token"}' >"$state/state.json"

@@ -102,14 +102,6 @@ trap 'rm -f "$BUILD_PACMAN_CONF"' EXIT
 # never "latest"). Keeps an existing hand-staged copy; see fetch-omarchy.sh.
 bash "$SCRIPT_DIR/fetch-omarchy.sh"
 
-# Ensure Omarchy and Friday plugins are fully synced
-echo "Synchronizing Omarchy shell and Friday OS desktop plugins..."
-mkdir -p "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins"
-cp -r "$PROJECT_ROOT/friday-os/plugins/friday.shell" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
-cp -r "$PROJECT_ROOT/friday-os/plugins/friday.context" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
-cp -r "$PROJECT_ROOT/friday-os/plugins/friday.bar" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
-cp -r "$PROJECT_ROOT/friday-os/plugins/friday.lock" "$PROFILE_DIR/airootfs/usr/share/omarchy/shell/plugins/"
-
 # Ensure executable permissions on all omarchy binaries
 chmod -R +x "$PROFILE_DIR/airootfs/usr/share/omarchy/bin" 2>/dev/null || true
 chmod +x "$PROFILE_DIR/airootfs/root/configurator" "$PROFILE_DIR/airootfs/root/installer"

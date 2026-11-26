@@ -9,9 +9,8 @@ import QtQuick
  *
  * The daemon writes the file atomically (tmp + rename); FileView picks up each
  * write. Every accessor is guarded so a missing file, malformed JSON or a
- * vanished field degrades to "offline"/empty instead of a QML error. This
- * mirrors friday-os/plugins/friday.shell/FridayState.qml (the Omarchy bar
- * widget), which reads the same contract.
+ * vanished field degrades to "offline"/empty instead of a QML error. FRIDAY
+ * Shell (packaging/linux/shell/services/Friday.qml) reads the same contract.
  */
 Singleton {
     id: root

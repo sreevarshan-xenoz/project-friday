@@ -17,7 +17,7 @@ No kernel drivers or modules unless nothing else can do it.
 |---|---|
 | Core + daemon | Rust workspace (`core`, `planner`, `services/*`). `friday-linux-daemon` (`services/mobile`; shipped as `friday-daemon.exe` on Windows) runs goals and publishes `state.json` (`~/.local/state/friday`, `%LOCALAPPDATA%\friday`). Default AI: OpenCode Zen's free models; a user key takes precedence. |
 | Linux | `friday` CLI (`packaging/linux/friday`), FRIDAY Shell (`packaging/linux/shell`, Quickshell), Hyprland binds Super+Y / Super+Alt+Y / Super+Ctrl+Y, all in the `friday-git` Arch package (`packaging/arch`). |
-| FRIDAY OS | `iso/friday/`. Default desktop: FRIDAY Shell on Omarchy's pinned Hyprland config; Omarchy's shell keeps lock/idle/polkit with its bar, notifications and OSD off (`friday-os/plugins/friday.bar`). end-4's Dots-Hyprland is a vendored, non-default option: don't copy its look or code. |
+| FRIDAY OS | `iso/friday/`. Default desktop: FRIDAY Shell on Omarchy's pinned Hyprland config; Omarchy's shell doesn't run: FRIDAY does its jobs (`friday wallpaper` via swaybg, `friday lock` via hyprlock, `friday idle` via hypridle, FRIDAY Shell's polkit card). end-4's Dots-Hyprland is a vendored, non-default option: don't copy its look or code. |
 | Windows | `friday-tray.exe` (`windows-tray/`, .NET 8): per-user tray app, hotkeys Win+Y / Win+Alt+Y / Win+Ctrl+Y, ask box, supervises the daemon and `windows-host/` (C#: UIA, COM, Win32). Per-user MSI in `installer/windows/` (no service: session 0 can't see the desktop). |
 
 ## Plan

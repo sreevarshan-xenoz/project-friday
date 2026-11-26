@@ -359,11 +359,6 @@ ln -sf friday /mnt/usr/bin/friday-os
 
 mkdir -p /mnt/usr/share/omarchy
 rsync -a /usr/share/omarchy/ /mnt/usr/share/omarchy/
-# The lock screen (friday.lock, like Omarchy's) authenticates through
-# /etc/pam.d/omarchy-lock-password and refuses to lock without it. Omarchy's
-# own installer writes it (install/config/lockscreen-pam.sh); this is that step.
-arch-chroot /mnt env OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:/usr/bin omarchy-apply-lock >/dev/null \
-  || echo "warning: could not set up lock screen authentication (run omarchy-apply-lock after login)" >&2
 
 # The FRIDAY OS desktop (the package owns the rest of /usr/share/friday).
 if [ -d /usr/share/friday/dots-hyprland ]; then
@@ -598,8 +593,8 @@ else
   esac
   # FRIDAY's wallpapers on the themes FRIDAY Shell's palettes sit on: the
   # palette's own set first (Horizon leads core), then every other set, all
-  # linked from the package. Omarchy starts on the first; its menu's Style >
-  # Background picks another. Linked before omarchy-theme-set, which picks one.
+  # linked from the package. The theme starts on the first, which becomes
+  # FRIDAY's wallpaper below. Linked before omarchy-theme-set, which picks one.
   wp=/mnt/usr/share/friday/wallpapers
   if [[ -d $wp && ( $THEME_SLUG == "matte-black" || $THEME_SLUG == "nord" ) ]]; then
     bg="/mnt$USER_HOME/.config/omarchy/backgrounds/$THEME_SLUG"
@@ -623,30 +618,21 @@ else
     echo "warning: could not apply the $THEME_SLUG theme (run omarchy-theme-set $THEME_SLUG after login)" >&2
   fi
 
-  # FRIDAY Shell draws the bar, notifications and OSD, so Omarchy's shell turns
-  # those off (friday.bar is an empty bar option), and friday.lock replaces
-  # Omarchy's lock screen. Its user shell.json replaces
-  # the defaults wholesale, so start from the pinned defaults.
-  mkdir -p "/mnt$USER_HOME/.config/omarchy" "/mnt$USER_HOME/.config/friday"
-  # Omarchy's screensaver needs ttfx, which is in Omarchy's package repo,
-  # not Arch's; without it the screen fills with "command not found". Put it
-  # a day out, so the 5-minute lock always comes first (and it's skipped
-  # while locked).
-  if jq '.bar.id = "friday.bar" | .idle.screensaver = 86400
-         | .disabledPlugins = (((.disabledPlugins // []) + ["omarchy.notifications", "omarchy.osd", "omarchy.lock"]) | unique)' \
-       /mnt/usr/share/omarchy/config/omarchy/shell.json >"/mnt$USER_HOME/.config/omarchy/shell.json.new"; then
-    mv "/mnt$USER_HOME/.config/omarchy/shell.json.new" "/mnt$USER_HOME/.config/omarchy/shell.json"
-  else
-    rm -f "/mnt$USER_HOME/.config/omarchy/shell.json.new"
-    echo "warning: could not write Omarchy shell.json; Omarchy's bar stays on" >&2
-  fi
+  # Omarchy's shell doesn't run on FRIDAY OS (hyprland.lua): FRIDAY Shell
+  # asks for administrator passwords ("polkit"), swaybg draws the wallpaper
+  # the theme just picked ("wallpaper", via friday wallpaper show), hyprlock
+  # locks and hypridle goes idle (friday lock, friday idle).
+  mkdir -p "/mnt$USER_HOME/.config/friday"
+  WALLPAPER=$(arch-chroot /mnt readlink -f "$USER_HOME/.local/state/omarchy/current/background" 2>/dev/null || true)
+  [[ -n $WALLPAPER && -f /mnt$WALLPAPER ]] || WALLPAPER=""
   case "$SHELL_STYLE" in
     Island*) SHELL_STYLE_ID=island ;;
     Dock*)   SHELL_STYLE_ID=dock ;;
     Lean*)   SHELL_STYLE_ID=lean ;;
     *)       SHELL_STYLE_ID=ember ;;
   esac
-  printf '{\n  "style": "%s",\n  "palette": "%s"\n}\n' "$SHELL_STYLE_ID" "$SHELL_PALETTE" \
+  jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" \
+    '{style: $style, palette: $palette, polkit: true} + (if $wp == "" then {} else {wallpaper: $wp} end)' \
     >"/mnt$USER_HOME/.config/friday/shell.json"
   # Windows' gaps, corners and borders to match (~/.config/friday/hypr-look.lua),
   # written as the user, who must own the directory first.

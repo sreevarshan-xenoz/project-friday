@@ -177,8 +177,12 @@ check "Hyprland reports no config errors" 'out=$(hyprctl configerrors); echo "$o
 check "FRIDAY OS keymap is live, Omarchy's defaults off" 'hyprctl binds -j | jq -e "any(.[]; .modmask == 64 and .key == \"Y\" and .description == \"FRIDAY: Ask\") and any(.[]; .key == \"Super_L\" and .release) and (any(.[]; .description == \"Pop window out (float & pin)\") | not)"'
 check "FRIDAY daemon is active" 'systemctl --user is-active friday-linux-daemon'
 check "FRIDAY Shell is running" 'ps -eo args | grep -q "^quickshell .*/usr/share/friday/shell"'
+check "Omarchy's shell is not running (FRIDAY does its jobs)" '! ps -eo args | grep -q "^quickshell .*/usr/share/omarchy/shell"'
+check "the wallpaper is drawn (friday wallpaper: swaybg)" 'ps -eo args | grep -q "^swaybg .*/usr/share/friday/wallpapers/"'
+check "idle dims, locks and blanks the screen (friday idle: hypridle)" 'pgrep -x hypridle >/dev/null'
+check "FRIDAY Shell is the password prompt (polkit agent)" 'jq -e ".polkit == true" ~/.config/friday/shell.json >/dev/null'
 check "no app failed to start in the session" '! journalctl --user -b --no-pager | grep -E "Command not found|App failure|binary could not be found"'
-check "commands the desktop runs are installed" 'm=""; for c in xdg-terminal-exec udiskie inotifywait nautilus hyprpicker wpctl brightnessctl grim slurp hyprlock fuzzel wl-paste notify-send playerctl jq btop xdg-user-dir powerprofilesctl; do command -v $c >/dev/null || m="$m $c"; done; [ -z "$m" ] || { echo "missing:$m"; false; }'
+check "commands the desktop runs are installed" 'm=""; for c in xdg-terminal-exec udiskie inotifywait nautilus hyprpicker wpctl brightnessctl grim slurp hyprlock hypridle swaybg fuzzel wl-paste notify-send playerctl jq btop xdg-user-dir powerprofilesctl; do command -v $c >/dev/null || m="$m $c"; done; [ -z "$m" ] || { echo "missing:$m"; false; }'
 check "omarchy-* commands are on a login shell's PATH" 'bash -lc "command -v omarchy-launch-terminal omarchy-version-channel" >/dev/null'
 check "friday in zsh is the FRIDAY CLI, not an alias" 'w=$(zsh -c "source ~/.zshrc >/dev/null 2>&1; whence -w friday"); echo "$w"; [ "$w" = "friday: command" ]'
 check "friday doctor finds no problems" 'friday doctor --quick'
@@ -189,16 +193,16 @@ fi
 
 # The lock screen locks, takes the password typed on the VM's keyboard, and
 # locks again after that (a stale lock state once made the second lock a no-op).
-lock_state() { vm friday "$session_env; bash -lc 'omarchy-shell lock isLocked'" 2>/dev/null; }
+lock_state() { if vm friday 'pgrep -x hyprlock' >/dev/null 2>&1; then echo true; else echo false; fi; }
 lock_round() {
-  vm friday "$session_env; bash -lc 'omarchy-shell lock lock'" >/dev/null 2>&1; sleep 3
+  vm friday "$session_env; hyprctl eval 'hl.exec_cmd(\"friday lock\")'" >/dev/null 2>&1; sleep 4
   [[ "$(lock_state)" == true ]] || { echo "did not lock"; return 1; }
   for k in f r i d a y ret; do monitor "sendkey $k 60" >/dev/null; sleep 0.2; done
   sleep 6
   [[ "$(lock_state)" == false ]] || { echo "the password did not unlock it"; return 1; }
 }
-if out=$(vm friday 'test -f /etc/pam.d/omarchy-lock-password' 2>&1); then echo "  ok   the lock screen has its PAM service"
-else echo "  FAIL the lock screen has no /etc/pam.d/omarchy-lock-password"; FAILS=$((FAILS + 1)); fi
+if out=$(vm friday 'test -f /etc/pam.d/hyprlock' 2>&1); then echo "  ok   the lock screen has its PAM service"
+else echo "  FAIL the lock screen has no /etc/pam.d/hyprlock"; FAILS=$((FAILS + 1)); fi
 for round in 1 2; do
   if out=$(lock_round 2>&1); then echo "  ok   lock screen round $round: locks, then the password unlocks it"
   else echo "  FAIL lock screen round $round: $out"; FAILS=$((FAILS + 1)); fi
