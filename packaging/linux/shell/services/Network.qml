@@ -42,7 +42,7 @@ Singleton {
   Process {
     id: poll
     command: ["sh", "-c", "command -v nmcli >/dev/null || exit 3; nmcli -t radio wifi; echo --; "
-      + "nmcli -t -f TYPE,STATE,CONNECTION device; echo --; nmcli -t -f ACTIVE,SIGNAL dev wifi 2>/dev/null"]
+      + "nmcli -t -f TYPE,STATE,CONNECTION device; echo --; nmcli -t -f ACTIVE,SIGNAL dev wifi list --rescan no 2>/dev/null"]
     stdout: StdioCollector {
       onStreamFinished: {
         const parts = text.split("--\n");
