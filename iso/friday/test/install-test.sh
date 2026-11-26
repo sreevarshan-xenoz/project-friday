@@ -61,6 +61,7 @@ boot() { # boot <cdrom|disk>
     -drive file="$WORK/disk.qcow2",if=virtio,format=qcow2,cache=unsafe \
     "${media[@]}" \
     -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$PORT-:22" -device virtio-net-pci,netdev=net0 \
+    -smbios "type=11,value=io.systemd.credential.binary:ssh.authorized_keys.root=$(base64 -w0 "$WORK/key.pub")" \
     -device virtio-vga -display none \
     -chardev "socket,id=mon0,path=$MON,server=on,wait=off" -mon chardev=mon0,mode=readline \
     -serial "file:$OUT/serial-$1.log" >"$OUT/qemu-$1.log" 2>&1 &
@@ -82,14 +83,17 @@ stop_vm() {
   QEMU_PID=""
 }
 
-# SSH without sshpass: the password comes from an askpass helper.
+# SSH without sshpass: the password comes from an askpass helper. The live
+# system takes keys only: this run's key goes in as a systemd credential.
 printf '#!/bin/sh\necho %s\n' "$PASS_WORD" >"$WORK/askpass"
 chmod +x "$WORK/askpass"
+ssh-keygen -q -t ed25519 -N "" -C friday-install-test -f "$WORK/key"
 vm() { # vm <user> <command...>
   local user="$1"; shift
   SSH_ASKPASS="$WORK/askpass" SSH_ASKPASS_REQUIRE=force DISPLAY=none \
     ssh -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o LogLevel=ERROR -o ConnectTimeout=10 -o PreferredAuthentications=password,keyboard-interactive,none \
+    -o LogLevel=ERROR -o ConnectTimeout=10 -i "$WORK/key" -o IdentitiesOnly=yes \
+    -o PreferredAuthentications=publickey,password,keyboard-interactive \
     "$user@127.0.0.1" "$@"
 }
 

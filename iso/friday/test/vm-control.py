@@ -21,6 +21,8 @@ SERIAL_SOCK = "/tmp/friday-qemu-serial.sock"
 SERIAL_LOG = "/tmp/friday-qemu-serial.log"
 SSH_HOST = "127.0.0.1"
 SSH_PORT = 2222
+# run-qemu.sh hands the live system this key (it takes keys only).
+SSH_KEY = os.environ.get("FRIDAY_VM_KEY", os.path.expanduser("~/.cache/friday-vm/ssh-key"))
 
 
 def send_qemu_monitor(cmd: str, timeout: float = 2.0) -> str:
@@ -105,6 +107,10 @@ def ssh_exec(cmd: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
         "ConnectTimeout=5",
         "-o",
         "BatchMode=yes",
+        "-i",
+        SSH_KEY,
+        "-o",
+        "IdentitiesOnly=yes",
         f"root@{SSH_HOST}",
         cmd,
     ]
