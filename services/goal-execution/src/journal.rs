@@ -8,7 +8,7 @@
 // seed its `EpisodeStore`, so FRIDAY knows tomorrow what mattered today.
 use crate::memory::CognitiveEpisode;
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -128,10 +128,11 @@ impl MemoryJournal {
         }
         let mut loaded = Vec::new();
         if path.exists() {
-            let file =
-                fs::File::open(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
-            for line in BufReader::new(file).lines() {
-                let line = line.map_err(|e| format!("read {}: {e}", path.display()))?;
+            let bytes = fs::read(&path).map_err(|e| format!("open {}: {e}", path.display()))?;
+            // Line by line on bytes: one invalid UTF-8 byte (a torn write)
+            // skips its line instead of failing the whole journal.
+            for raw in bytes.split(|b| *b == b'\n') {
+                let line = String::from_utf8_lossy(raw);
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -353,6 +354,22 @@ mod tests {
     /// Killed halfway through a line (kill -9, power cut): the torn line is
     /// skipped and the next fact starts on a line of its own, so nothing
     /// saved before or after the crash is lost.
+    /// One invalid UTF-8 byte (a write cut mid-character) skips its line;
+    /// it used to fail the whole journal, and the daemon with it.
+    #[test]
+    fn a_bad_byte_skips_its_line_not_the_journal() {
+        let path = temp_journal_path("badbyte");
+        let journal = MemoryJournal::open(&path).expect("open journal");
+        journal.append(&fact_episode("My main project is FRIDAY"));
+        {
+            let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+            f.write_all(b"{\"cut\": \"caf\xc3\n").unwrap();
+        }
+        journal.append(&fact_episode("The coffee machine lives in the kitchen"));
+        let after = MemoryJournal::open(&path).expect("a bad byte doesn't fail the journal");
+        assert_eq!(after.len(), 2);
+    }
+
     #[test]
     fn a_torn_last_line_never_swallows_the_next_fact() {
         let path = temp_journal_path("torn");
