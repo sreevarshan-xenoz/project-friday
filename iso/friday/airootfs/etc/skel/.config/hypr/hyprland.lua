@@ -11,6 +11,10 @@ omarchy_default_bindings = false
 -- keeping core window-manager bindings:
 -- omarchy_preinstalled_bindings = false
 
+-- FRIDAY does what Omarchy's shell did: FRIDAY Shell (bar, notifications,
+-- password prompts), the wallpaper, lock screen and idle (autostart.lua).
+omarchy_shell = false
+
 -- Load Omarchy defaults.
 require("default.hypr.omarchy")
 

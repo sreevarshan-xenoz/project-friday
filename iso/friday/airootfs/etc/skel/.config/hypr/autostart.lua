@@ -1,10 +1,14 @@
 -- Extra autostart processes.
 -- o.launch_on_start("my-service")
 
--- FRIDAY Shell: the bar, drawers, notifications and OSD. Omarchy's shell
--- keeps running for the lock screen, idle, polkit, menus and pickers; its own
--- bar, notifications and OSD are switched off in ~/.config/omarchy/shell.json.
+-- FRIDAY Shell: the bar, drawers, notifications, OSD and password prompts.
+-- Omarchy's shell doesn't run (omarchy_shell = false in hyprland.lua).
 o.exec_on_start("friday shell")
+
+-- The wallpaper (friday wallpaper), and dim, lock (friday lock) and screen
+-- off when idle (friday idle).
+o.exec_on_start("friday wallpaper show")
+o.exec_on_start("friday idle")
 
 -- FRIDAY: one-time first-login greeting (offers AI setup if no key yet).
 o.exec_on_start("friday welcome")
