@@ -2015,8 +2015,8 @@ impl GoalRunner {
     /// fabric powers investigation and the shared `journal` makes memory survive
     /// restarts (close FRIDAY, reopen it tomorrow, it still knows). This is the
     /// live-host constructor: it also wires the S4 desktop adapters — the real
-    /// Windows host (named pipe, `default` session matching the C# host's
-    /// `FRIDAY_SESSION`), or on Linux the Hyprland host, and the browser
+    /// Windows host (named pipe for `FRIDAY_SESSION`, which the tray sets for
+    /// both the daemon and the host), or on Linux the Hyprland host, and the browser
     /// (CDP-backed Chrome) — plus the S6 observation seam (the real screen +
     /// focus sensors).
     pub fn with_fabric_and_memory(
@@ -2032,7 +2032,9 @@ impl GoalRunner {
             None,
             Some(journal),
             #[cfg(windows)]
-            Some(WindowsAdapter::for_session("default")),
+            Some(WindowsAdapter::for_session(
+                &std::env::var("FRIDAY_SESSION").unwrap_or_else(|_| "default".into()),
+            )),
             #[cfg(target_os = "linux")]
             Some(WindowsAdapter::for_hyprland()),
             #[cfg(not(any(windows, target_os = "linux")))]

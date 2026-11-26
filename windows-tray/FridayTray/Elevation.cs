@@ -41,6 +41,11 @@ internal static class Elevation
         return File.Exists(source) ? File.ReadAllText(source).Trim() : install.Dir;
     }
 
+    /// <summary>This tray is the administrator copy (its files are locked while it runs).</summary>
+    public static bool RunningFromCopy() =>
+        Environment.ProcessPath is { } exe
+        && Path.GetFullPath(exe).StartsWith(MachineDir() + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Administrator start-up is on but runs a copy from before FRIDAY was last updated.</summary>
     public static bool CopyIsOld() =>
         Enabled() && ElevatedStart.CopyIsOld(MachineDir(), f => File.Exists(f) ? FileVersionInfo.GetVersionInfo(f).FileVersion : null);
@@ -81,8 +86,11 @@ internal static class Elevation
         if (!on)
         {
             var del = Schtasks("/Delete", "/TN", ElevatedStart.TaskName, "/F");
+            if (del.Code != 0 && Enabled())
+                return 1; // the task still runs the copy: keep it
+            // Fails while the copy itself runs; the next turn-on clears it.
             try { if (Directory.Exists(copy)) Directory.Delete(copy, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            return del.Code == 0 || !Enabled() ? 0 : 1;
+            return 0;
         }
         // The task runs an administrator-only copy, never the per-user install
         // (any program the person runs could replace the exe there).

@@ -1583,6 +1583,14 @@ internal sealed partial class SettingsWindow : FluentWindow
         // The task now starts FRIDAY at sign-in (or the Run entry does again).
         _install.StartsAtLogin = !on;
         Show("General");
+        if (!on && Elevation.RunningFromCopy())
+        {
+            // The administrator copy can't be removed while it runs.
+            MessageBox.Show(this, "FRIDAY will start normally from now on. It restarts now to finish.",
+                "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Information);
+            _do.RestartIntoAdministrator();
+            return;
+        }
         if (MessageBox.Show(this, on ? "FRIDAY will start as administrator from now on. Restart it now?" : "FRIDAY will start normally from now on. Restart it now?",
                 "FRIDAY", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             _do.RestartIntoAdministrator();
