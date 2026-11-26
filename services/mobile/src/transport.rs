@@ -16,6 +16,8 @@ use std::time::Duration;
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 use uuid::Uuid;
@@ -41,6 +43,7 @@ pub struct WsServer {
     outbound: broadcast::Sender<ServerMessage>,
     commands: broadcast::Sender<Command>,
     sessions: Arc<SessionRegistry>,
+    client_token: Option<Arc<str>>,
 }
 
 impl WsServer {
@@ -56,7 +59,18 @@ impl WsServer {
             outbound,
             commands,
             sessions: SessionRegistry::new(),
+            client_token: None,
         }
+    }
+
+    /// Loopback mode's gate for what FRIDAY sends out (questions, page and
+    /// screen text, answers): a client gets nothing until it has sent a
+    /// command carrying this token (friday-ctl always does), and a browser
+    /// (any handshake with an `Origin` header) is refused, so neither a web
+    /// page nor another local program can listen in.
+    pub fn with_client_token(mut self, token: impl Into<String>) -> Self {
+        self.client_token = Some(Arc::from(token.into()));
+        self
     }
 
     /// Configure whether the handshake demands QR-pairing. `false` = open mode
@@ -124,9 +138,18 @@ impl WsServer {
             let commands = self.commands.clone();
             let sessions = self.sessions.clone();
             let require_auth = self.require_auth;
+            let client_token = self.client_token.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    handle_conn(sock, auth, require_auth, outbound, commands, sessions).await
+                if let Err(e) = handle_conn(
+                    sock,
+                    auth,
+                    require_auth,
+                    client_token,
+                    outbound,
+                    commands,
+                    sessions,
+                )
+                .await
                 {
                     tracing::debug!("conn {peer} ended: {e}");
                 }
@@ -150,15 +173,31 @@ impl Drop for SessionGuard {
     }
 }
 
+// (The Origin check's callback type is tungstenite's, large error and all.)
+#[allow(clippy::result_large_err)]
 async fn handle_conn(
     sock: TcpStream,
     auth: Arc<AuthRegistry>,
     require_auth: bool,
+    client_token: Option<Arc<str>>,
     outbound: broadcast::Sender<ServerMessage>,
     commands: broadcast::Sender<Command>,
     sessions: Arc<SessionRegistry>,
 ) -> Result<(), crate::error::MobileError> {
-    let mut ws: WsStream = tokio_tungstenite::accept_async(sock).await?;
+    let mut ws: WsStream = if client_token.is_some() {
+        // Browsers always send Origin; FRIDAY's own clients never do.
+        let refuse_browsers = |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
+            if req.headers().contains_key("origin") {
+                let mut no = ErrorResponse::new(Some("browsers can't connect".into()));
+                *no.status_mut() = StatusCode::FORBIDDEN;
+                return Err(no);
+            }
+            Ok(resp)
+        };
+        tokio_tungstenite::accept_hdr_async(sock, refuse_browsers).await?
+    } else {
+        tokio_tungstenite::accept_async(sock).await?
+    };
     let session_id = Uuid::new_v4().to_string();
     sessions.insert(crate::session::MobileSession::new(session_id.clone()));
     let _registered = SessionGuard {
@@ -287,6 +326,8 @@ async fn handle_conn(
 
     // --- relay phase: client <-> FRIDAY ---
     let mut rx = outbound.subscribe();
+    // With a client token, nothing goes out until the client proved it has it.
+    let mut trusted = client_token.is_none();
     let mut ping = tokio::time::interval(Duration::from_secs(30));
     loop {
         tokio::select! {
@@ -301,6 +342,13 @@ async fn handle_conn(
                 };
                 match msg {
                     Message::Text(t) => {
+                        if !trusted {
+                            if let (Some(want), Ok(ClientMessage::Command { params, .. })) =
+                                (client_token.as_deref(), protocol::decode(&t))
+                            {
+                                trusted = params.get("token").and_then(|v| v.as_str()) == Some(want);
+                            }
+                        }
                         handle_client_text(
                             &mut ws,
                             &session_id,
@@ -321,11 +369,12 @@ async fn handle_conn(
             }
             outgoing = rx.recv() => {
                 match outgoing {
-                    Ok(sm) => {
+                    Ok(sm) if trusted => {
                         // Topic routing is a later refinement; for Alpha we forward
                         // all outbound server messages to the authenticated client.
                         send(&mut ws, sm).await?;
                     }
+                    Ok(_) => { /* not trusted (yet): nothing goes out */ }
                     Err(_) => { /* all senders gone; harmless */ }
                 }
             }
@@ -674,6 +723,110 @@ mod tests {
             .is_err();
         assert!(timed_out, "unauthenticated command must not be delivered");
         client.close(None).await.unwrap();
+    }
+
+    /// A loopback server with a client token, and a broadcast handle.
+    async fn token_server() -> (String, broadcast::Sender<ServerMessage>) {
+        let server = WsServer::new("127.0.0.1:0".parse().unwrap())
+            .with_require_auth(false)
+            .with_client_token("tok-123");
+        let outbound = server.broadcast_tx();
+        let commands = server.subscribe_commands();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let _keep_commands_open = commands;
+            let _ = server.run_on(listener).await;
+        });
+        (url, outbound)
+    }
+
+    fn secret() -> ServerMessage {
+        ServerMessage::Error {
+            code: "answer".into(),
+            message: "the secret answer".into(),
+        }
+    }
+
+    /// The next text frame within `ms`, or None.
+    async fn next_text(ws: &mut Client, ms: u64) -> Option<String> {
+        let wait = tokio::time::timeout(Duration::from_millis(ms), async {
+            loop {
+                match ws.next().await {
+                    Some(Ok(Message::Text(t))) => return Some(t),
+                    Some(Ok(_)) => continue,
+                    _ => return None,
+                }
+            }
+        });
+        wait.await.ok().flatten()
+    }
+
+    #[tokio::test]
+    async fn without_the_token_a_local_client_hears_nothing() {
+        let (url, outbound) = token_server().await;
+        let (mut client, _) = tokio_tungstenite::connect_async(url.as_str())
+            .await
+            .unwrap();
+        let _welcome = recv_server_msg(&mut client).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = outbound.send(secret());
+        assert_eq!(
+            next_text(&mut client, 400).await,
+            None,
+            "an untrusted client got an event"
+        );
+
+        // A command with the wrong token doesn't open it either.
+        let wrong = ClientMessage::Command {
+            id: "1".into(),
+            method: "plan.goal".into(),
+            params: serde_json::json!({ "token": "guess" }),
+        };
+        send_client(&mut client, &wrong).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = outbound.send(secret());
+        assert_eq!(
+            next_text(&mut client, 400).await,
+            None,
+            "a wrong token opened the stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_the_token_friday_ctl_hears_its_answer() {
+        let (url, outbound) = token_server().await;
+        let (mut client, _) = tokio_tungstenite::connect_async(url.as_str())
+            .await
+            .unwrap();
+        let _welcome = recv_server_msg(&mut client).await;
+        let cmd = ClientMessage::Command {
+            id: "1".into(),
+            method: "plan.goal".into(),
+            params: serde_json::json!({ "token": "tok-123", "goal": "hi" }),
+        };
+        send_client(&mut client, &cmd).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = outbound.send(secret());
+        let got = next_text(&mut client, 2000)
+            .await
+            .expect("the trusted client got nothing");
+        assert!(got.contains("the secret answer"));
+    }
+
+    #[tokio::test]
+    async fn a_browser_cannot_connect() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let (url, _outbound) = token_server().await;
+        let mut req = url.as_str().into_client_request().unwrap();
+        req.headers_mut()
+            .insert("Origin", "https://evil.example.com".parse().unwrap());
+        assert!(
+            tokio_tungstenite::connect_async(req).await.is_err(),
+            "a browser page connected"
+        );
+        // FRIDAY's own client (no Origin) still can.
+        assert!(tokio_tungstenite::connect_async(url.as_str()).await.is_ok());
     }
 
     #[tokio::test]

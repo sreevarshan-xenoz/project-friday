@@ -143,7 +143,12 @@ async fn main() {
 
     // Shell ingress: loopback WebSocket, NO QR-pair auth (same host; the
     // loopback bind + per-run session token are the trust boundary).
-    let server = WsServer::new(listen).with_require_auth(false);
+    // The token is made first: it also gates what goes out (questions,
+    // context, answers), not only the commands that come in.
+    let token = generate_token();
+    let server = WsServer::new(listen)
+        .with_require_auth(false)
+        .with_client_token(token.clone());
     tracing::info!("shell command ingress on {listen} (loopback, token-gated)");
     let outbound: broadcast::Sender<_> = server.broadcast_tx();
     let sessions = server.sessions();
@@ -157,7 +162,6 @@ async fn main() {
     };
     tracing::info!("shell state at {}", state_path.display());
 
-    let token = generate_token();
     let state = Arc::new(Mutex::new(ShellState::starting(token.clone())));
     let listener = match listener {
         Ok(l) => l,
