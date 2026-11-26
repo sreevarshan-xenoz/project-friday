@@ -324,6 +324,11 @@ else
   fail "installer runs omarchy-theme-set before the user owns their home (theme silently not applied)"
 fi
 
+grep -q '^pacstrap_with_retry /mnt base linux linux-firmware intel-ucode amd-ucode ' "$AIROOTFS/root/installer" \
+  && pass "installer installs CPU microcode" || fail "installer installs no CPU microcode"
+grep -q '^chmod 700 "/mnt$USER_HOME"' "$AIROOTFS/root/installer" \
+  && pass "installer keeps the home folder private" || fail "installer leaves the home folder readable by everyone"
+
 echo "Omarchy commands stay executable in the ISO"
 if [[ -x "$AIROOTFS/usr/share/omarchy/bin/omarchy-theme-set" ]]; then
   # mkarchiso drops file modes; profiledef.sh must list every executable.
