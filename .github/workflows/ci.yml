@@ -198,13 +198,17 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "--apply-elevated on exited $($p.ExitCode)" }
           $xml = schtasks /Query /TN FRIDAY /XML | Out-String
           if ($LASTEXITCODE -ne 0 -or $xml -notmatch 'HighestAvailable' -or $xml -notmatch 'LogonTrigger') { throw "the FRIDAY task is not as expected:`n$xml" }
-          if ($xml -notmatch [regex]::Escape($tray)) { throw "the task does not start $tray" }
-          Write-Host "task FRIDAY: logon, highest available, starts $tray"
+          # It runs an administrator-only copy, never the per-user install.
+          $copy = "$env:ProgramFiles\FRIDAY\Administrator start\friday-tray.exe"
+          if ($xml -notmatch [regex]::Escape($copy)) { throw "the task does not start $copy" }
+          if (-not (Test-Path $copy)) { throw "no administrator copy at $copy" }
+          Write-Host "task FRIDAY: logon, highest available, starts $copy"
           $p = Start-Process $tray -ArgumentList '--apply-elevated', 'off', "`"$me`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "--apply-elevated off exited $($p.ExitCode)" }
           schtasks /Query /TN FRIDAY 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) { throw "the FRIDAY task is still there after turning it off" }
-          Write-Host "task removed"
+          if (Test-Path (Split-Path $copy)) { throw "the administrator copy is still there after turning it off" }
+          Write-Host "task and copy removed"
           # The last query failed on purpose; don't let it fail the step.
           exit 0
       - name: Opening an app by name (PATH, App Paths, the Start menu)
