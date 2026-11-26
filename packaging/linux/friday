@@ -7194,8 +7194,10 @@ $offer"
     command -v hyprlock >/dev/null 2>&1 || { echo "friday: hyprlock is not installed" >&2; exit 1; }
     # Never two lock screens (this user's: another user's hyprlock doesn't lock this session).
     pgrep -u "$(id -u)" -x hyprlock >/dev/null 2>&1 && exit 0
-    conf=$(friday_lock_conf)
-    exec hyprlock -c "$conf"
+    # If FRIDAY's config can't be written (a full disk), hyprlock's own
+    # default still locks: never fail open.
+    if conf=$(friday_lock_conf 2>/dev/null) && [ -s "$conf" ]; then exec hyprlock -c "$conf"; fi
+    exec hyprlock
     ;;
   idle)
     command -v hypridle >/dev/null 2>&1 || { echo "friday: hypridle is not installed" >&2; exit 1; }
@@ -7203,7 +7205,22 @@ $offer"
     # Your own ~/.config/friday/hypridle.conf, else FRIDAY's.
     conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hypridle.conf"
     [ -f "$conf" ] || conf=/usr/share/friday/hypr/hypridle.conf
-    exec hypridle -c "$conf"
+    # Kept running: if hypridle dies, nothing would lock when idle or before
+    # sleep. A clean exit (stopped on purpose) ends it; five crashes in a
+    # minute stop the retries.
+    starts=0 window=$SECONDS
+    while :; do
+      status=0; hypridle -c "$conf" || status=$?
+      [ "$status" -eq 0 ] && exit 0
+      [ -e "${XDG_RUNTIME_DIR:-/nonexistent}/${WAYLAND_DISPLAY:-wayland-0}" ] || exit 0
+      if (( SECONDS - window > 60 )); then starts=0; window=$SECONDS; fi
+      starts=$((starts + 1))
+      if (( starts > 5 )); then
+        notify-send -a FRIDAY -u critical "The idle lock stopped" "hypridle keeps crashing; the screen won't lock by itself. Lock with Super+L." 2>/dev/null || true
+        exit 1
+      fi
+      sleep 2
+    done
     ;;
   shell)
     # FRIDAY Shell. A copy in ~/.config/friday/shell (or $FRIDAY_SHELL_DIR)

@@ -2899,6 +2899,17 @@ jq '.clock24h = false' "$HOME/.config/friday/shell.json" >"$HOME/sj" && mv "$HOM
 contains "a 12-hour clock when shell.json says so" "$(cat "$lock")" "date +%I"
 contains "with am or pm" "$(cat "$lock")" "date +%P"
 contains "on the wallpaper" "$(cat "$lock")" "path = $img"
+# If FRIDAY's lock config can't be written, hyprlock's own default still locks.
+: >"$S/not-a-dir"
+: >"$LOG"; XDG_CONFIG_HOME="$S/not-a-dir" "${dk_env[@]}" bash "$F" lock
+if grep -qx "hyprlock " "$LOG"; then pass "an unwritable config still locks (hyprlock's default)"
+else fail "friday lock with an unwritable config ran: $(cat "$LOG")"; fi
+# hypridle is kept running: a crash starts it again, a clean exit ends it.
+printf '#!/bin/bash\nn=$(cat %q 2>/dev/null || echo 0); echo $((n+1)) >%q\n[ "$n" -lt 2 ] && exit 1; exit 0\n' "$S/idle-runs" "$S/idle-runs" >"$S/hypridle"; chmod +x "$S/hypridle"
+mkdir -p "$SH/run"; : >"$SH/run/wayland-test"
+rm -f "$S/idle-runs"; WAYLAND_DISPLAY=wayland-test timeout 20 "${dk_env[@]}" bash "$F" idle >/dev/null 2>&1
+[[ "$(cat "$S/idle-runs" 2>/dev/null)" == 3 ]] && pass "friday idle starts hypridle again after a crash" || fail "hypridle ran $(cat "$S/idle-runs" 2>/dev/null) times (want 3: two crashes, then a clean exit)"
+rm -f "$S/hypridle" "$S/idle-runs" "$S/not-a-dir"
 # hyprlang reads "#" as a comment: a wallpaper named with one is escaped.
 hash="$HOME/wall #2.jpg"; : >"$hash"
 "${dk_env[@]}" bash "$F" wallpaper "$hash" >/dev/null; "${dk_env[@]}" bash "$F" lock
