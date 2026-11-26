@@ -64,12 +64,27 @@ Item {
     }
   }
 
+  // The aperture iris: whenever FRIDAY's state changes, the mark closes a
+  // little with a twist and opens again into the new state. One short run
+  // per change, nothing while it stays put.
+  property real iris: 1
+  onModeChanged: if (Theme.motion && root.visible) irisAnim.restart()
+  SequentialAnimation {
+    id: irisAnim
+    NumberAnimation { target: root; property: "iris"; to: 0.55; duration: Theme.fast; easing.type: Easing.InCubic }
+    NumberAnimation { target: root; property: "iris"; to: 1; duration: Theme.slow; easing.type: Theme.spring }
+  }
+
   // The 100 x 100 drawing, scaled about the middle.
   Item {
     anchors.centerIn: parent
     width: 100
     height: 100
     scale: root.size / 100
+    transform: [
+      Scale { origin.x: 50; origin.y: 50; xScale: root.iris; yScale: root.iris },
+      Rotation { origin.x: 50; origin.y: 50; angle: (1 - root.iris) * -140 }
+    ]
 
     // The blades turn slowly while FRIDAY is busy.
     Shape {

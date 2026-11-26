@@ -2874,6 +2874,13 @@ else pass "wallpaper off clears it and stops swaybg"; fi
 lock="$HOME/.config/friday/hyprlock.conf"
 contains "friday lock runs hyprlock with FRIDAY's config" "$(cat "$LOG")" "hyprlock -c $lock"
 contains "in the palette's colours (polar accent)" "$(cat "$lock")" "outer_color = rgb(88c0d0)"
+contains "the clock is staggered: hours" "$(cat "$lock")" "date +%H"
+contains "then minutes in the accent colour" "$(sed -n '/date +%M/,/}/p' "$lock")" "color = rgb(88c0d0)"
+contains "what's playing shows on the lock screen" "$(cat "$lock")" "lock-info media"
+jq '.clock24h = false' "$HOME/.config/friday/shell.json" >"$HOME/sj" && mv "$HOME/sj" "$HOME/.config/friday/shell.json"
+"${dk_env[@]}" bash "$F" lock
+contains "a 12-hour clock when shell.json says so" "$(cat "$lock")" "date +%I"
+contains "with am or pm" "$(cat "$lock")" "date +%P"
 contains "on the wallpaper" "$(cat "$lock")" "path = $img"
 # hyprlang reads "#" as a comment: a wallpaper named with one is escaped.
 hash="$HOME/wall #2.jpg"; : >"$hash"

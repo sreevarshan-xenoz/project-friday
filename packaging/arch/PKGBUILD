@@ -134,6 +134,7 @@ package() {
   install -Dm644 "$lin/fonts/"OFL-*.txt -t "$pkgdir/usr/share/licenses/$pkgname"
   install -Dm644 "$lin/hyprland/friday.lua" -t "$pkgdir/usr/share/friday/hyprland"
   install -Dm644 "$lin/hypr/hypridle.conf" -t "$pkgdir/usr/share/friday/hypr"
+  install -Dm755 "$lin/hypr/lock-info" -t "$pkgdir/usr/share/friday/hypr"
   install -Dm644 "$lin/niri/friday.kdl" -t "$pkgdir/usr/share/friday/niri"
   # App bundles for `friday bundles` (the first-login tour offers them).
   install -Dm644 "$lin"/bundles/* -t "$pkgdir/usr/share/friday/bundles"

@@ -133,12 +133,13 @@ PanelWindow {
       }
     }
 
-    Label {
+    // The digits roll when they change (components/RollingText.qml).
+    RollingText {
       id: clock
       text: Qt.formatDateTime(time.date, Config.clock24h ? "ddd d MMM   HH:mm" : "ddd d MMM   h:mm AP")
-      font.family: Theme.mono
-      font.pixelSize: Theme.fontM
-      font.weight: Font.Medium
+      family: Theme.mono
+      pixelSize: Theme.fontM
+      weight: Font.Medium
       color: clockMouse.containsMouse || Shell.isOpen("calendar", bar.modelData.name) ? Theme.accent : Theme.text
       SystemClock { id: time; precision: SystemClock.Minutes }
       MouseArea {

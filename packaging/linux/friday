@@ -359,6 +359,9 @@ friday_lock_conf() {
   [ -f "$wp" ] && [[ "$wp" != *"$nl"* ]] || wp=""
   [ -f "$face" ] && [[ "$face" != *"$nl"* ]] || face=""
   wp=${wp//#/##}; face=${face//#/##}
+  # 24-hour clock unless shell.json says "clock24h": false; lock-info's lines.
+  local hfmt=%H info=/usr/share/friday/hypr/lock-info
+  [ "$(jq -r '.clock24h' "$conf" 2>/dev/null)" = false ] && hfmt=%I
   # The password field sits under your picture, or closer to the date without one.
   local field_y=-60
   [ -n "$face" ] && field_y=-150
@@ -392,23 +395,48 @@ friday_lock_conf() {
     echo "    blur_size = 6"
     echo "    brightness = 0.6"
     echo "}"
+    # The clock, staggered: hours, then minutes half a line lower in the
+    # accent colour (the layout of the owner's laptop lock screen).
     echo "label {"
     echo "    monitor ="
-    echo "    text = \$TIME"
+    echo "    text = cmd[update:5000] date +$hfmt"
     echo "    color = rgb($text)"
-    echo "    font_size = 96"
+    echo "    font_size = 104"
     echo "    font_family = Michroma"
-    echo "    position = 0, 170"
+    echo "    position = -128, 205"
     echo "    halign = center"
     echo "    valign = center"
     echo "}"
+    echo "label {"
+    echo "    monitor ="
+    echo "    text = cmd[update:5000] date +%M"
+    echo "    color = rgb($accent)"
+    echo "    font_size = 104"
+    echo "    font_family = Michroma"
+    echo "    position = 128, 135"
+    echo "    halign = center"
+    echo "    valign = center"
+    echo "}"
+    if [ "$hfmt" = %I ]; then
+      # 12-hour: am or pm, small, after the minutes.
+      echo "label {"
+      echo "    monitor ="
+      echo "    text = cmd[update:60000] date +%P"
+      echo "    color = rgb($subtext)"
+      echo "    font_size = 22"
+      echo "    font_family = Michroma"
+      echo "    position = 290, 105"
+      echo "    halign = center"
+      echo "    valign = center"
+      echo "}"
+    fi
     echo "label {"
     echo "    monitor ="
     echo "    text = cmd[update:60000] date +\"%A, %d %B\""
     echo "    color = rgb($subtext)"
     echo "    font_size = 20"
     echo "    font_family = Space Grotesk"
-    echo "    position = 0, 50"
+    echo "    position = 0, 8"
     echo "    halign = center"
     echo "    valign = center"
     echo "}"
@@ -445,6 +473,29 @@ friday_lock_conf() {
     echo "    halign = center"
     echo "    valign = center"
     echo "}"
+    # What's useful at a glance: what's playing, and the battery on a laptop.
+    echo "label {"
+    echo "    monitor ="
+    echo "    text = cmd[update:3000] $info media"
+    echo "    color = rgb($subtext)"
+    echo "    font_size = 14"
+    echo "    font_family = Space Grotesk"
+    echo "    position = 0, 90"
+    echo "    halign = center"
+    echo "    valign = bottom"
+    echo "}"
+    if ls /sys/class/power_supply/BAT*/capacity >/dev/null 2>&1; then
+      echo "label {"
+      echo "    monitor ="
+      echo "    text = cmd[update:30000] $info battery"
+      echo "    color = rgb($subtext)"
+      echo "    font_size = 14"
+      echo "    font_family = Space Grotesk"
+      echo "    position = -36, -30"
+      echo "    halign = right"
+      echo "    valign = top"
+      echo "}"
+    fi
     echo "label {"
     echo "    monitor ="
     echo "    text = FRIDAY  ·  \$USER"
