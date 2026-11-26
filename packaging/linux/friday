@@ -7194,10 +7194,10 @@ $offer"
     command -v hyprlock >/dev/null 2>&1 || { echo "friday: hyprlock is not installed" >&2; exit 1; }
     # Never two lock screens (this user's: another user's hyprlock doesn't lock this session).
     pgrep -u "$(id -u)" -x hyprlock >/dev/null 2>&1 && exit 0
-    # If FRIDAY's config can't be written (a full disk), hyprlock's own
-    # default still locks: never fail open.
+    # If FRIDAY's config can't be written (a full disk), the packaged plain
+    # one still locks: never fail open.
     if conf=$(friday_lock_conf 2>/dev/null) && [ -s "$conf" ]; then exec hyprlock -c "$conf"; fi
-    exec hyprlock
+    exec hyprlock -c /usr/share/friday/hypr/hyprlock.conf
     ;;
   idle)
     command -v hypridle >/dev/null 2>&1 || { echo "friday: hypridle is not installed" >&2; exit 1; }
