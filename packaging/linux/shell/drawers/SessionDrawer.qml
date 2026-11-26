@@ -5,15 +5,15 @@ import qs.common
 import qs.components
 
 // Lock, sleep, log out, restart, power off. Arrow keys move, Enter picks.
-// Locking goes through logind, so whichever locker the session uses
-// (Omarchy's lock screen, hyprlock) answers it.
+// Lock runs FRIDAY's lock screen directly (it doesn't depend on the idle
+// daemon being up); without hyprlock, logind asks the session's own locker.
 FocusScope {
   id: root
 
   signal done()
 
   readonly property var actions: [
-    { icon: Icons.lock, label: "Lock", cmd: ["loginctl", "lock-session"], danger: false },
+    { icon: Icons.lock, label: "Lock", cmd: ["sh", "-c", "friday lock || loginctl lock-session"], danger: false },
     { icon: Icons.sleep, label: "Sleep", cmd: ["systemctl", "suspend"], danger: false },
     { icon: Icons.logout, label: "Log out", cmd: ["sh", "-c", "command -v uwsm >/dev/null && uwsm check is-active && exec uwsm stop; exec loginctl terminate-session \"$XDG_SESSION_ID\""], danger: false },
     { icon: Icons.restart, label: "Restart", cmd: ["systemctl", "reboot"], danger: true },
