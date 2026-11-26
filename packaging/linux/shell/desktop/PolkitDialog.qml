@@ -18,6 +18,13 @@ Scope {
   readonly property var flow: agent.flow
   readonly property bool asking: flow !== null && !flow.isCompleted
 
+  function send() {
+    if (!root.flow || !root.flow.isResponseRequired) return;
+    const answer = input.text;
+    input.text = "";
+    root.flow.submit(answer);
+  }
+
   PolkitAgent {
     id: agent
     path: "/org/friday/PolkitAgent"
@@ -35,7 +42,16 @@ Scope {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: root.asking ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
-    onVisibleChanged: if (visible) { input.text = ""; input.forceActiveFocus(); }
+    // The password never outlives the prompt: cleared on showing, on
+    // sending it, and on closing.
+    onVisibleChanged: { input.text = ""; if (visible) input.forceActiveFocus(); }
+
+    // Escape cancels wherever the focus is (the card takes the keyboard).
+    Shortcut {
+      sequence: "Escape"
+      enabled: win.visible
+      onActivated: if (root.flow) root.flow.cancelAuthenticationRequest()
+    }
 
     Rectangle {
       id: card
@@ -104,8 +120,7 @@ Scope {
             echoMode: root.flow && root.flow.responseVisible ? TextInput.Normal : TextInput.Password
             enabled: root.flow !== null && root.flow.isResponseRequired
             clip: true
-            onAccepted: if (root.flow && root.flow.isResponseRequired) root.flow.submit(text)
-            Keys.onEscapePressed: if (root.flow) root.flow.cancelAuthenticationRequest()
+            onAccepted: root.send()
           }
           Label {
             anchors.fill: parent
@@ -131,7 +146,7 @@ Scope {
           Chip {
             text: "Allow"
             primary: true
-            onClicked: if (root.flow && root.flow.isResponseRequired) root.flow.submit(input.text)
+            onClicked: root.send()
           }
         }
       }

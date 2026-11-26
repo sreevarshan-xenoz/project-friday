@@ -281,6 +281,8 @@ friday_wallpapers_dir=/usr/share/friday/wallpapers
 friday_wallpaper_show() {
   local conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json" f old pidfile
   pidfile="${XDG_RUNTIME_DIR:-/tmp}/friday-wallpaper-$(id -u).pid"
+  # One change at a time (Super+Ctrl+T pressed quickly), so no swaybg is lost.
+  exec 9>"$pidfile.lock"; flock 9
   f=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
   old=$(cat "$pidfile" 2>/dev/null || true)
   if [ -n "$f" ] && [ -f "$f" ] && command -v swaybg >/dev/null 2>&1; then
@@ -292,6 +294,7 @@ friday_wallpaper_show() {
     rm -f "$pidfile"
   fi
   if [ -n "$old" ] && [ "$(cat "/proc/$old/comm" 2>/dev/null)" = swaybg ]; then kill "$old" 2>/dev/null || true; fi
+  exec 9>&-
 }
 
 # `friday wallpaper [current|list|next|show|off|<image>]`.
@@ -317,10 +320,11 @@ friday_wallpaper() {
       [ -f "$f" ] || { echo "friday: not an image file: $1" >&2; return 1; } ;;
   esac
   mkdir -p "$(dirname "$conf")"
-  if ! jq --arg v "$f" 'if $v == "" then del(.wallpaper) else .wallpaper = $v end' "$conf" >"$conf.tmp" 2>/dev/null; then
-    jq -n --arg v "$f" 'if $v == "" then {} else {wallpaper: $v} end' >"$conf.tmp"
+  local tmp; tmp=$(mktemp "$conf.XXXXXX")
+  if ! jq --arg v "$f" 'if $v == "" then del(.wallpaper) else .wallpaper = $v end' "$conf" >"$tmp" 2>/dev/null; then
+    jq -n --arg v "$f" 'if $v == "" then {} else {wallpaper: $v} end' >"$tmp"
   fi
-  mv -f "$conf.tmp" "$conf"
+  mv -f "$tmp" "$conf"
   friday_wallpaper_show
   if [ -n "$f" ]; then echo "Wallpaper: $f"; else echo "FRIDAY no longer sets a wallpaper."; fi
 }
@@ -348,9 +352,15 @@ friday_lock_conf() {
   done
   [ -n "$bg" ] || { bg=111318 text=dde0e6 subtext=b8bbc3 accent=d42d51 signal=8ea4c8 error=ff5d6c warn=e8b04f; }
   wp=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
+  # Paths go into hyprlang, where "#" starts a comment ("##" is a literal
+  # one) and a line can't be split: escape the first, skip paths with the second.
+  local face="$HOME/.face" nl=$'\n'
+  [ -f "$wp" ] && [[ "$wp" != *"$nl"* ]] || wp=""
+  [ -f "$face" ] && [[ "$face" != *"$nl"* ]] || face=""
+  wp=${wp//#/##}; face=${face//#/##}
   # The password field sits under your picture, or closer to the date without one.
   local field_y=-60
-  [ -f "$HOME/.face" ] && field_y=-150
+  [ -n "$face" ] && field_y=-150
   mkdir -p "$(dirname "$out")"
   {
     echo "# FRIDAY's lock screen (palette: $palette). Written by \`friday lock\` on"
@@ -375,7 +385,7 @@ friday_lock_conf() {
     echo "}"
     echo "background {"
     echo "    monitor ="
-    if [ -n "$wp" ] && [ -f "$wp" ]; then echo "    path = $wp"; fi
+    if [ -n "$wp" ]; then echo "    path = $wp"; fi
     echo "    color = rgb($bg)"
     echo "    blur_passes = 3"
     echo "    blur_size = 6"
@@ -401,10 +411,10 @@ friday_lock_conf() {
     echo "    halign = center"
     echo "    valign = center"
     echo "}"
-    if [ -f "$HOME/.face" ]; then
+    if [ -n "$face" ]; then
       echo "image {"
       echo "    monitor ="
-      echo "    path = $HOME/.face"
+      echo "    path = $face"
       echo "    size = 104"
       echo "    rounding = -1"
       echo "    border_size = 2"
@@ -7105,14 +7115,14 @@ $offer"
     ;;
   lock)
     command -v hyprlock >/dev/null 2>&1 || { echo "friday: hyprlock is not installed" >&2; exit 1; }
-    # Never two lock screens.
-    pidof hyprlock >/dev/null 2>&1 && exit 0
+    # Never two lock screens (this user's: another user's hyprlock doesn't lock this session).
+    pgrep -u "$(id -u)" -x hyprlock >/dev/null 2>&1 && exit 0
     conf=$(friday_lock_conf)
     exec hyprlock -c "$conf"
     ;;
   idle)
     command -v hypridle >/dev/null 2>&1 || { echo "friday: hypridle is not installed" >&2; exit 1; }
-    pidof hypridle >/dev/null 2>&1 && { echo "hypridle is already running"; exit 0; }
+    pgrep -u "$(id -u)" -x hypridle >/dev/null 2>&1 && { echo "hypridle is already running"; exit 0; }
     # Your own ~/.config/friday/hypridle.conf, else FRIDAY's.
     conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hypridle.conf"
     [ -f "$conf" ] || conf=/usr/share/friday/hypr/hypridle.conf
@@ -7166,10 +7176,11 @@ $offer"
           *) echo "friday: no $key '$1' (choose one of: $opts)" >&2; exit 1 ;;
         esac
         mkdir -p "$(dirname "$conf")"
-        if ! jq --arg k "$key" --arg v "$1" '.[$k] = $v' "$conf" >"$conf.tmp" 2>/dev/null; then
-          jq -n --arg k "$key" --arg v "$1" '{($k): $v}' >"$conf.tmp"
+        tmp=$(mktemp "$conf.XXXXXX")
+        if ! jq --arg k "$key" --arg v "$1" '.[$k] = $v' "$conf" >"$tmp" 2>/dev/null; then
+          jq -n --arg k "$key" --arg v "$1" '{($k): $v}' >"$tmp"
         fi
-        mv -f "$conf.tmp" "$conf"
+        mv -f "$tmp" "$conf"
         shell_window_look
         echo "FRIDAY Shell $key: $1" ;;
       close)   exec quickshell -p "$dir" ipc call shell close ;;

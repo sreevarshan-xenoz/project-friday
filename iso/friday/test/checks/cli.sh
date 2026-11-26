@@ -2847,7 +2847,8 @@ dk_env=(env FRIDAY_SHELL_DIR="$REPO_ROOT/packaging/linux/shell" XDG_RUNTIME_DIR=
 # (A script, so its process is named swaybg; TERM ends it at once.)
 printf '#!/bin/bash\necho "swaybg $*" >> %q\ntrap '"'"'kill $! 2>/dev/null; exit'"'"' TERM\nsleep 30 & wait\n' "$LOG" >"$S/swaybg"; chmod +x "$S/swaybg"
 printf '#!/bin/bash\necho "hyprlock $*" >> %q\n' "$LOG" >"$S/hyprlock"; chmod +x "$S/hyprlock"
-printf '#!/bin/bash\nexit 1\n' >"$S/pidof"; chmod +x "$S/pidof"
+# No hyprlock of this user's running (the real pgrep could see the tester's own).
+printf '#!/bin/bash\nexit 1\n' >"$S/pgrep"; chmod +x "$S/pgrep"
 img="$HOME/wall one.jpg"; : >"$img"; : >"$HOME/wall-two.jpg"
 echo '{ "palette": "polar" }' >"$HOME/.config/friday/shell.json"
 : >"$LOG"; "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null
@@ -2871,7 +2872,15 @@ lock="$HOME/.config/friday/hyprlock.conf"
 contains "friday lock runs hyprlock with FRIDAY's config" "$(cat "$LOG")" "hyprlock -c $lock"
 contains "in the palette's colours (polar accent)" "$(cat "$lock")" "outer_color = rgb(88c0d0)"
 contains "on the wallpaper" "$(cat "$lock")" "path = $img"
-"${dk_env[@]}" bash "$F" wallpaper off >/dev/null; rm -f "$S/swaybg" "$S/hyprlock" "$S/pidof"
+# hyprlang reads "#" as a comment: a wallpaper named with one is escaped.
+hash="$HOME/wall #2.jpg"; : >"$hash"
+"${dk_env[@]}" bash "$F" wallpaper "$hash" >/dev/null; "${dk_env[@]}" bash "$F" lock
+contains "a \"#\" in the wallpaper's name is escaped for hyprlock" "$(cat "$lock")" "path = $HOME/wall ##2.jpg"
+# Two quick changes (Super+Ctrl+T held) leave exactly one swaybg.
+"${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null & "${dk_env[@]}" bash "$F" wallpaper "$HOME/wall-two.jpg" >/dev/null; wait
+n=$(ps -eo args= | grep -c "^/bin/bash $S/swaybg ")
+[[ $n == 1 ]] && pass "quick wallpaper changes leave one swaybg" || fail "quick changes left $n swaybg running"
+"${dk_env[@]}" bash "$F" wallpaper off >/dev/null; rm -f "$S/swaybg" "$S/hyprlock" "$S/pgrep"
 
 echo "doctor"
 printf '{"status":"running","token":"s3cret-token"}' >"$state/state.json"
