@@ -4965,7 +4965,8 @@ friday_act_may_run() {
   [[ "$a" == *$'\n'* ]] && return 1
   read -r first _ <<<"$a"
   case "$first" in
-    /*|./*|../*) return 1 ;;
+    # A program by path, or a VAR=value in front (LD_PRELOAD=..., BASH_ENV=...).
+    */*|*=*) return 1 ;;
     bash|sh|zsh|dash|fish|ksh|python|python3|perl|ruby|node|php|lua|eval|exec|source|xargs|env|command|builtin|nohup|setsid|timeout|nice|ionice|stdbuf|watch|find|curl|wget|ssh|scp|rsync|mv|cp|ln|install|chmod|chown|tee|crontab|at|systemd-run|flatpak-spawn|busybox) return 1 ;;
   esac
   return 0
