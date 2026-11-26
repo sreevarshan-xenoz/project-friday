@@ -4950,6 +4950,27 @@ friday_irreversible() {
   [[ "$a" =~ $first ]] || [[ "$a" =~ $other ]]
 }
 
+# Whether "act" may run an action without asking ($1 = the action, $2 =
+# "true" when it came from quoted text: a selection, a page, a window's
+# text, which may carry instructions). Only plain actions: a list of things
+# that can't be undone always has gaps (bash -c "rm ...", /bin/rm, find
+# -delete, curl | sh), so anything with shell syntax, quotes, an interpreter,
+# a command run through another, a copy/move that can overwrite, or a
+# program given by path asks too.
+friday_act_may_run() {
+  local a=$1 first
+  [ "${2:-false}" = true ] && return 1
+  friday_irreversible "$a" && return 1
+  case "$a" in *[\"\'\`\$\;\|\&\<\>\(\)\{\}\\\*\?\~\!\#]*) return 1 ;; esac
+  [[ "$a" == *$'\n'* ]] && return 1
+  read -r first _ <<<"$a"
+  case "$first" in
+    /*|./*|../*) return 1 ;;
+    bash|sh|zsh|dash|fish|ksh|python|python3|perl|ruby|node|php|lua|eval|exec|source|xargs|env|command|builtin|nohup|setsid|timeout|nice|ionice|stdbuf|watch|find|curl|wget|ssh|scp|rsync|mv|cp|ln|install|chmod|chown|tee|crontab|at|systemd-run|flatpak-spawn|busybox) return 1 ;;
+  esac
+  return 0
+}
+
 # `friday autonomy [status|ask-all|ask-risky|act]`: how much FRIDAY may do on
 # its own. ask-risky (the default) asks before commands, file writes, app
 # launches and anything that can't be undone; ask-all asks before every
@@ -6741,6 +6762,7 @@ $offer"
 
     action_to_confirm=$(jq -r '.needs_confirmation.action // empty' <<<"$summary" 2>/dev/null || true)
     preview_to_confirm=$(jq -r '.needs_confirmation.preview // empty' <<<"$summary" 2>/dev/null || true)
+    quoted_to_confirm=$(jq -r '.needs_confirmation.quoted == true' <<<"$summary" 2>/dev/null || echo true)
     if [ "$ctl_rc" -eq 3 ] && [ -n "$action_to_confirm" ]; then
       # A question before acting is not an answer to read out.
       if [ -n "${say_fd:-}" ]; then
@@ -6750,8 +6772,10 @@ $offer"
       (
         # "act" (friday autonomy): no question; the answer says what was done.
         # What can't be taken back still asks (deleting, formatting, root,
-        # uninstalling, shutting down, closing a window).
-        if [ "$(friday_autonomy_mode)" = act ] && ! friday_irreversible "$action_to_confirm"; then
+        # uninstalling, shutting down, closing a window), and so does
+        # anything friday_act_may_run doesn't call plain.
+        # Quoted text (a selection, a page) and anything not plain always ask.
+        if [ "$(friday_autonomy_mode)" = act ] && friday_act_may_run "$action_to_confirm" "$quoted_to_confirm"; then
           action=run
           notify-send -a FRIDAY -- "FRIDAY acted on its own" "$action_to_confirm"$'\n'"(Settings → Permissions to change this)" 2>/dev/null || true
         else
