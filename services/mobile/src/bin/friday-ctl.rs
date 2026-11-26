@@ -1814,10 +1814,12 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("local-ai") {
         return local_ai(&raw[1..]);
     }
-    // `docs ... -` and `show ... -`: the question comes on stdin, so it isn't
-    // on the command line for every program to read.
+    // `docs ... -`, `show ... -` and `browser find -`: the question comes on
+    // stdin, so it isn't on the command line for every program to read.
     let mut raw = raw;
-    if matches!(raw.first().map(String::as_str), Some("docs" | "show"))
+    let browser_find = raw.first().map(String::as_str) == Some("browser")
+        && raw.get(1).map(String::as_str) == Some("find");
+    if (browser_find || matches!(raw.first().map(String::as_str), Some("docs" | "show")))
         && raw.last().map(String::as_str) == Some("-")
     {
         let mut text = String::new();

@@ -1985,7 +1985,7 @@ friday_show() {
   # itself (never in a private window: the extension isn't let in there).
   class=$(timeout 2 hyprctl activewindow -j 2>/dev/null | jq -r '.class // ""' 2>/dev/null || true)
   if [[ "${class,,}" =~ (chromium|chrome|brave|firefox|zen|vivaldi|librewolf) ]] && [ -z "$(friday_private_window)" ]; then
-    out=$(timeout 10 friday-ctl browser find "$1" 2>/dev/null) && return 0
+    out=$(timeout 10 friday-ctl browser find - <<<"$1" 2>/dev/null) && return 0
     # The browser said the tab is private (its own check, which also knows
     # windows the title doesn't show): nothing of it goes anywhere else.
     [ "$(jq -r '.error // empty' <<<"$out" 2>/dev/null)" = "no tab FRIDAY may read" ] && return 1
@@ -6553,7 +6553,7 @@ $offer"
           if [ "$pick" = remember ]; then
             # Said back as the person's own words, so memory keeps it as theirs.
             mine=$(sed -e 's/^you are /I am /' -e "s/^you're /I'm /" -e 's/^you /I /' -e 's/^your /my /' <<<"$proposal")
-            if timeout 60 friday-ctl goal --wait "remember that $mine" >/dev/null 2>&1; then
+            if timeout 60 friday-ctl goal --wait - <<<"remember that $mine" >/dev/null 2>&1; then
               notify-send -a FRIDAY -- "FRIDAY" "Remembered: $proposal. (friday answers search shows what FRIDAY remembers.)" 2>/dev/null || true
             fi
           fi

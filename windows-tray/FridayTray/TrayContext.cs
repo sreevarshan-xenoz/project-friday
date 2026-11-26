@@ -479,7 +479,7 @@ internal sealed class TrayContext : ApplicationContext
             // "How do I … in FRIDAY?": FRIDAY's guide goes with the question.
             if (kind == AskKind.Plain && context is null && !web && Asking.AboutFriday(asked))
             {
-                var docs = await Ctl.RunAsync(_install, ["docs", "--", asked], TimeSpan.FromSeconds(3));
+                var docs = await Ctl.RunAsync(_install, ["docs", "--", "-"], TimeSpan.FromSeconds(3), input: asked);
                 if (docs.Ok)
                     request = Asking.WithDocs(request, docs.Output);
             }
@@ -1207,7 +1207,7 @@ internal sealed class TrayContext : ApplicationContext
         {
             form.Proposal = MemoryProposal.From(question);
             form.Remember += proposal => _ = Ctl.RunAsync(_install,
-                ["goal", "--wait", $"remember that {MemoryProposal.InOwnWords(proposal)}"], TimeSpan.FromSeconds(60));
+                ["goal", "--wait", "-"], TimeSpan.FromSeconds(60), input: $"remember that {MemoryProposal.InOwnWords(proposal)}");
         }
         form.AskAgain += () => _ = AskAsync(kind);
         // "That was wrong" shows only while its switch is on (Settings, General).
