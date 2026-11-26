@@ -179,6 +179,36 @@ grep -q "friday-mobile-\*.pkg.tar.zst" "$AIROOTFS/root/installer" \
   && pass "installer installs the friday-mobile package" || fail "installer does not install friday-mobile"
 grep -q "packaging/arch/friday-mobile/PKGBUILD" "$PROFILE_DIR/build-iso.sh" \
   && pass "build-iso.sh builds the friday-mobile package" || fail "build-iso.sh does not build friday-mobile"
+grep -q "friday-wallpapers-\*.pkg.tar.zst" "$AIROOTFS/root/installer" \
+  && pass "installer installs the wallpapers package" || fail "installer does not install friday-wallpapers"
+grep -q "packaging/arch/wallpapers/PKGBUILD" "$PROFILE_DIR/build-iso.sh" \
+  && pass "build-iso.sh builds the wallpapers package" || fail "build-iso.sh does not build friday-wallpapers"
+# The wallpapers are linked before omarchy-theme-set (which picks the first),
+# with the chosen palette's set first: run the installer's lines on a fake root.
+wp_line=$(grep -n '^  wp=/mnt/usr/share/friday/wallpapers' "$AIROOTFS/root/installer" | cut -d: -f1)
+set_line=$(grep -n "omarchy-theme-set '\$THEME_SLUG'" "$AIROOTFS/root/installer" | head -1 | cut -d: -f1)
+if [[ -n "$wp_line" && -n "$set_line" ]] && (( wp_line < set_line )); then
+  pass "wallpapers are linked before the theme picks one"
+else fail "wallpapers aren't linked before omarchy-theme-set"; fi
+R=$(mktemp -d /tmp/friday-wp.XXXXXX)
+mkdir -p "$R/usr/share/friday/wallpapers/core" "$R/usr/share/friday/wallpapers/polar" "$R/usr/share/friday/wallpapers/empty"
+touch "$R/usr/share/friday/wallpapers/core/0-horizon.jpg" "$R/usr/share/friday/wallpapers/core/arcs.jpg" \
+  "$R/usr/share/friday/wallpapers/polar/fjord.jpg"
+snippet=$(sed -n '/^  wp=\/mnt\/usr\/share\/friday\/wallpapers/,/^  fi$/p' "$AIROOTFS/root/installer" | sed "s|/mnt|$R|g")
+for pal in core polar; do
+  ( arch-chroot() { :; }; USER_HOME=/home/u USERNAME=u THEME_SLUG=matte-black SHELL_PALETTE=$pal; eval "$snippet" )
+  first=$(ls "$R/home/u/.config/omarchy/backgrounds/matte-black" | sort | head -1)
+  want=$([[ $pal == core ]] && echo 0-core-0-horizon.jpg || echo 0-polar-fjord.jpg)
+  n=$(ls "$R/home/u/.config/omarchy/backgrounds/matte-black" | wc -l)
+  # Links point into the installed system (/usr/share/...), never the
+  # installer's /mnt; an empty set links nothing.
+  target=$(readlink "$R/home/u/.config/omarchy/backgrounds/matte-black/$first")
+  want_target=/usr/share/friday/wallpapers/${want#0-}; want_target=${want_target/core-0-/core\/0-}; want_target=${want_target/polar-/polar\/}
+  if [[ $first == "$want" && $n == 3 && $target == "$want_target" ]]; then pass "$pal: its own wallpaper comes first ($target), all $n linked"
+  else fail "$pal: first wallpaper is $first -> $target (want $want -> $want_target), $n linked"; fi
+  rm -rf "$R/home"
+done
+rm -rf "$R"
 grep -q 'git clone -q "https://aur.archlinux.org/\$2.git"' "$AIROOTFS/root/installer" \
   && pass "installer builds Brave and Zen from the AUR (never Flathub)" || fail "installer does not build the AUR browsers"
 # The update channel: the installer's [friday] repo must be where release.yml
