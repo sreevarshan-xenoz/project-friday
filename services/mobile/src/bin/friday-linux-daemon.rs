@@ -240,8 +240,16 @@ async fn main() {
         std::path::Path::new("friday-data"),
     );
     let _ = std::fs::create_dir_all(&memory_dir);
-    let journal =
-        MemoryJournal::open(memory_dir.join("episodes.jsonl")).expect("open memory journal");
+    // A journal that can't be opened (a read-only or full disk) must not stop
+    // FRIDAY: it runs with a memory kept for this run only, and says so.
+    let journal = match MemoryJournal::open(memory_dir.join("episodes.jsonl")) {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::error!("can't open the memory journal ({e}); remembering this run only");
+            let tmp = std::env::temp_dir().join(format!("friday-memory-{}", std::process::id()));
+            MemoryJournal::open(tmp.join("episodes.jsonl")).expect("a journal in the temp folder")
+        }
+    };
     tracing::info!(
         "persistent memory journal at {}/episodes.jsonl: {} episode(s) replayed",
         memory_dir.display(),
