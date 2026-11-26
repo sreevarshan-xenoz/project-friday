@@ -3,7 +3,6 @@
 //!
 //! ```text
 //! FRIDAY runtime (EventBus)
-//!      ├─ SystemProbe ──▶ telemetry.system events
 //!      ├─ GoalRunner   ──▶ runs real Executive over real evidence adapters
 //!      └─ shell_state  ──▶ ~/.local/state/friday/state.json  (file-backed contract)
 //!             │
@@ -16,7 +15,7 @@
 //! state from `state.json` → shell issues one controlled command
 //! (`planner.goal`) → the daemon runs it. No new IPC framework, no second event
 //! bus, no second shell architecture. Reuses `GoalRunner`, `Executive`, the
-//! evidence adapters, `WsServer`, `CommandGateway`, `SystemProbe`, and
+//! evidence adapters, `WsServer`, `CommandGateway`, and
 //! `VoiceIntake` exactly as the mobile daemon wires them, and adds only the
 //! Linux-graphical pieces that were greenfield: goal ownership, `state.json`,
 //! SIGTERM shutdown, and systemd readiness.
@@ -32,7 +31,7 @@ use friday_core::runtime::Friday;
 use friday_goal_execution::MemoryJournal;
 use friday_intelligence::InferenceFabric;
 use friday_mobile::shell_state::{CommandRecord, ShellState};
-use friday_mobile::{CommandGateway, GoalRunner, SystemProbe, VoiceConfig, VoiceIntake, WsServer};
+use friday_mobile::{CommandGateway, GoalRunner, VoiceConfig, VoiceIntake, WsServer};
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
@@ -183,9 +182,10 @@ async fn main() {
     // Seed initial `starting` document so the shell sees something on first read.
     write_state(&state_path, &render(&*state.lock().await));
 
-    // Real host telemetry onto the bus.
-    let probe = SystemProbe::new(bus.clone());
-    tokio::spawn(async move { probe.run().await });
+    // No standing system probe here: nothing on the desktop reads its
+    // samples, and scanning every process every 2 s (and rewriting
+    // state.json each time) was most of the idle daemon's CPU.
+    // `friday-ctl system-info` still samples on request.
 
     // Model-backed investigation + heuristic fallback. Bounded request avoids
     // a hung-local-model stall (same fabric tuning as the mobile daemon).
