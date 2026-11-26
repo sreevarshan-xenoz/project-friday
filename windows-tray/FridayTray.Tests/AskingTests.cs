@@ -54,18 +54,18 @@ public class AskingTests
     [Fact]
     public void Ctl_arguments_carry_the_web_flag_and_the_retry_options()
     {
-        Assert.Equal(["goal", "--wait", "q"], Asking.CtlArguments(AskKind.Plain, "q", "q"));
+        Assert.Equal(["goal", "--wait", "-"], Asking.CtlArguments(AskKind.Plain, "q", "q"));
         // A standing task asks on its own: the daemon then runs only what can be undone.
-        Assert.Equal(["goal", "--wait", "--scheduled", "q"],
+        Assert.Equal(["goal", "--wait", "--scheduled", "-"],
             Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Scheduled: true)));
-        Assert.Equal(["goal", "--wait", "--web", "q"],
+        Assert.Equal(["goal", "--wait", "--web", "-"],
             Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Web: true)));
-        Assert.Equal(["goal", "--wait", "--thorough", "--avoid", "opencode/big-pickle", "q"],
+        Assert.Equal(["goal", "--wait", "--thorough", "--avoid", "opencode/big-pickle", "-"],
             Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Thorough: true, Avoid: "opencode/big-pickle")));
         // No model to avoid (or a malformed one): still thorough, nothing avoided.
-        Assert.Equal(["goal", "--wait", "--thorough", "q"],
+        Assert.Equal(["goal", "--wait", "--thorough", "-"],
             Asking.CtlArguments(AskKind.Plain, "q", "q", null, new AskOptions(Thorough: true, Avoid: "nonsense")));
-        Assert.Equal(["goal", "--wait", "--confirm", "git status", "--web", "q"],
+        Assert.Equal(["goal", "--wait", "--confirm", "git status", "--web", "-"],
             Asking.CtlArguments(AskKind.Plain, "q", "q", "git status", new AskOptions(Web: true)));
         // A screen ask goes through the screen path, whatever the options.
         Assert.Equal(["context", "screen", "--yes", "--ask", "q", "--stream"],
@@ -147,7 +147,8 @@ public class AskingTests
     {
         Assert.Equal(["context", "screen", "--yes", "--ask", "what is this", "--stream"],
             Asking.CtlArguments(AskKind.Screen, "what is this", "ignored"));
-        Assert.Equal(["goal", "--wait", "req"], Asking.CtlArguments(AskKind.Plain, "q", "req"));
+        // The request goes on stdin ("-"), never on the command line.
+        Assert.Equal(["goal", "--wait", "-"], Asking.CtlArguments(AskKind.Plain, "q", "req"));
     }
 
     [Theory]
@@ -371,10 +372,10 @@ public class AskingTests
     public void CtlArguments_with_confirm_adds_flag()
     {
         var args = Asking.CtlArguments(AskKind.Plain, "list files", "list files", "dir");
-        Assert.Equal(["goal", "--wait", "--confirm", "dir", "list files"], args);
+        Assert.Equal(["goal", "--wait", "--confirm", "dir", "-"], args);
 
         var argsNull = Asking.CtlArguments(AskKind.Plain, "list files", "list files", null);
-        Assert.Equal(["goal", "--wait", "list files"], argsNull);
+        Assert.Equal(["goal", "--wait", "-"], argsNull);
     }
 
     [Fact]
@@ -388,7 +389,7 @@ public class AskingTests
         Assert.Equal("--wait", args[1]);
         Assert.Equal("--confirm", args[2]);
         Assert.Equal(action, args[3]);
-        Assert.Equal("commit my changes", args[4]);
+        Assert.Equal("-", args[4]);
 
         const string actionWithComplexQuotes = "cmd /c \"echo 'hello world' && exit 1\"";
         var args2 = Asking.CtlArguments(AskKind.Plain, "run script", "run script", actionWithComplexQuotes);

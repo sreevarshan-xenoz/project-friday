@@ -99,7 +99,9 @@ public static partial class Asking
             if (!string.IsNullOrEmpty(options.Avoid) && options.Avoid.Contains('/'))
                 args.AddRange(["--avoid", options.Avoid]);
         }
-        args.Add(request);
+        // The request (with any selection or page text) goes on stdin, not the
+        // command line, which other programs can read.
+        args.Add("-");
         return [.. args];
     }
 

@@ -499,7 +499,8 @@ internal sealed class TrayContext : ApplicationContext
     private async Task RewriteAsync(IntPtr target, string question, string how, string text)
     {
         Notify("FRIDAY", $"Rewriting: {how}…", ToolTipIcon.Info);
-        var r = await Ctl.RunAsync(_install, Asking.CtlArguments(AskKind.Plain, question, Rewrite.Request(how, text)), TimeSpan.FromMinutes(3));
+        var rewriteRequest = Rewrite.Request(how, text);
+        var r = await Ctl.RunAsync(_install, Asking.CtlArguments(AskKind.Plain, question, rewriteRequest), TimeSpan.FromMinutes(3), input: rewriteRequest);
         var outcome = Asking.Interpret(AskKind.Plain, question, r.ExitCode, r.Output);
         var rewritten = outcome.Ok ? Rewrite.Clean(outcome.Answer) : "";
         if (rewritten.Length == 0)
@@ -921,7 +922,8 @@ internal sealed class TrayContext : ApplicationContext
             Asking.CtlArguments(kind, question, request, confirm, options),
             TimeSpan.FromSeconds(240),
             onLine,
-            inflight.Token);
+            inflight.Token,
+            kind == AskKind.Screen ? null : request);
         if (_inflight == inflight)
             _inflight = null;
         poll.Stop();

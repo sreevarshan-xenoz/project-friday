@@ -1990,16 +1990,16 @@ friday_show() {
     # windows the title doesn't show): nothing of it goes anywhere else.
     [ "$(jq -r '.error // empty' <<<"$out" 2>/dev/null)" = "no tab FRIDAY may read" ] && return 1
   fi
-  out=$(timeout 20 friday-ctl show "$1" 2>/dev/null) || return 1
+  out=$(timeout 20 friday-ctl show - <<<"$1" 2>/dev/null) || return 1
   if [ "$(jq -r '.found' <<<"$out" 2>/dev/null)" != true ]; then
     names=$(jq -r '(.controls // []) | join("\n")' <<<"$out" 2>/dev/null || true)
     app=$(jq -r '.app // "this app"' <<<"$out" 2>/dev/null || echo "this app")
     [ -n "$names" ] && [ -z "$(friday_private_window)" ] || return 1
     request=$(printf 'Someone using %s asked: "%s"\nThese are the controls they can see now, one per line:\n%s\nIf the question is about something in this app, which one should they click first to get there? Reply with only its name exactly as written. If the question is not about this app (a place, a fact, anything else), or none fits, reply NONE.' "$app" "$1" "$names")
-    reply=$(friday-ctl goal --wait "$request" 2>/dev/null) || true
+    reply=$(friday-ctl goal --wait - <<<"$request" 2>/dev/null) || true
     pick=$(jq -rs 'map(select(type == "object" and .outcome? == "completed")) | last | .result // empty' <<<"$reply" 2>/dev/null | head -n1 || true)
     [ -n "$pick" ] && [ "$pick" != NONE ] || return 1
-    out=$(timeout 20 friday-ctl show --exact "$pick" "$1" 2>/dev/null) || return 1
+    out=$(timeout 20 friday-ctl show --exact "$pick" - <<<"$1" 2>/dev/null) || return 1
     [ "$(jq -r '.found' <<<"$out" 2>/dev/null)" = true ] || return 1
   fi
   bash "$0" shell ipc ring point "$(jq -r .x <<<"$out")" "$(jq -r .y <<<"$out")" \
@@ -2162,7 +2162,7 @@ friday_meeting() {
       local a; read -r -p "Send it? [y/N] " a || a=n
       [[ "$a" =~ ^[Yy] ]] || { echo "Nothing sent."; return 0; }
     fi
-    out=$(friday-ctl goal --wait "$request" 2>&1) || true
+    out=$(friday-ctl goal --wait - <<<"$request" 2>&1) || true
     reply=$(jq -rs 'map(select(type == "object" and .outcome? == "completed")) | last | .result // empty' <<<"$out" 2>/dev/null || true)
   fi
   while IFS='|' read -r kind at text; do
@@ -3650,7 +3650,7 @@ friday_paste_as() {
     "Cleaned up"*) how="cleaned up: fix spacing, line breaks and typos, change nothing else" ;;
   esac
   request=$(printf 'Rewrite the text below %s. Keep its language unless told to translate. Reply with only the result: no quotes, no notes, no introduction.\n\n[text to rewrite]\n"""\n%s\n"""' "$how" "$clip")
-  out=$(friday-ctl goal --wait "$request" 2>&1) || true
+  out=$(friday-ctl goal --wait - <<<"$request" 2>&1) || true
   summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
   text=$(friday_rewrite_clean "$(jq -r 'select(.outcome == "completed") | .result // empty' <<<"$summary" 2>/dev/null || true)")
   if [ -z "${text//[[:space:]]/}" ]; then
@@ -6172,7 +6172,7 @@ case "${1:-}" in
     # the daemon masks it before a model sees it).
     goal_kept="$goal"
     if friday_feature_on mask-history; then
-      goal_kept=$(friday-ctl mask -- "$goal" 2>/dev/null) && [ -n "$goal_kept" ] || goal_kept="$goal"
+      goal_kept=$(friday-ctl mask - <<<"$goal" 2>/dev/null) && [ -n "$goal_kept" ] || goal_kept="$goal"
     fi
     if ! ${explaining_error:-false} && [[ "$goal" != "Rewrite: "* ]] && [ -z "${FRIDAY_SUGGESTED:-}" ]; then
       { printf '%s\n' "$goal_kept"; grep -vxF -- "$goal_kept" "$history_file" 2>/dev/null || true; } \
@@ -6209,7 +6209,7 @@ case "${1:-}" in
     elif ! $use_screen && [ -z "$local_answer" ]; then
       # A typed question: documentation on this computer that fits it well
       # (Arch wiki, tldr, man pages; friday-ctl docs prints nothing otherwise).
-      docs=$(timeout 2 friday-ctl docs -- "$goal" 2>/dev/null || true)
+      docs=$(timeout 2 friday-ctl docs -- - <<<"$goal" 2>/dev/null || true)
       [ -z "$docs" ] || request=$(printf '%s\n\n[docs]\nThese excerpts from documentation on this computer may help. Use them only if they fit, and name the one you use (for example "Arch wiki: Pacman"):\n"""\n%s\n"""' "$goal" "$docs")
     fi
     # How-to, error and "why doesn't …" questions: what this computer runs
@@ -6255,7 +6255,9 @@ case "${1:-}" in
       # Not a rewrite: that text replaces the selection, it isn't read out.
       [ -z "${rewrite:-}" ] && [ -e "$(friday_speak_flag)" ] && friday_speak_ready \
         && friday_feature_on speak-as-it-comes && speak_early=true
-      "$@" --stream >"$outf" 2>&1 &
+      if [ -n "${ctl_stdin+x}" ]; then printf '%s' "$ctl_stdin" | "$@" --stream >"$outf" 2>&1 &
+      else "$@" --stream >"$outf" 2>&1 &
+      fi
       ctl=$!
       local receipt_shown="" sent
       while kill -0 "$ctl" 2>/dev/null; do
@@ -6746,8 +6748,10 @@ $offer"
           && ! $use_followup && ! $use_selection && [ -z "${context:-}" ] && [ -z "${tab:-}" ]; then
         ctl_args+=(--typed)
       fi
-      ctl_args+=("$request")
-      stream_ctl friday-ctl "${ctl_args[@]}"
+      # The question (with any selection or page text) goes on stdin, not the
+      # command line, where every program could read it (/proc/<pid>/cmdline).
+      ctl_args+=(-)
+      ctl_stdin=$request stream_ctl friday-ctl "${ctl_args[@]}"
       # The final {outcome,result,error} object; keep every line of the answer.
       summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$out" 2>/dev/null || echo '{}')
     fi
@@ -6790,8 +6794,8 @@ $offer"
             conf_ok=true
             conf_args=(goal --wait --confirm "$action_to_confirm")
             $use_web && conf_args+=(--web)
-            conf_args+=("$request")
-            conf_out=$(friday-ctl "${conf_args[@]}" 2>&1) || conf_ok=false
+            conf_args+=(-)
+            conf_out=$(friday-ctl "${conf_args[@]}" <<<"$request" 2>&1) || conf_ok=false
             conf_summary=$(jq -s 'map(select(type == "object" and .outcome? != null)) | last // {}' <<<"$conf_out" 2>/dev/null || echo '{}')
             show_answer "$conf_ok" "$conf_summary" "$conf_out"
             ;;
