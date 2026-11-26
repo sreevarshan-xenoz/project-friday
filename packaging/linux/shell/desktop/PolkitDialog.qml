@@ -18,6 +18,11 @@ Scope {
   readonly property var flow: agent.flow
   readonly property bool asking: flow !== null && !flow.isCompleted
 
+  function cancel() {
+    input.text = "";
+    if (root.flow) root.flow.cancelAuthenticationRequest();
+  }
+
   function send() {
     if (!root.flow || !root.flow.isResponseRequired) return;
     const answer = input.text;
@@ -50,7 +55,7 @@ Scope {
     Shortcut {
       sequence: "Escape"
       enabled: win.visible
-      onActivated: if (root.flow) root.flow.cancelAuthenticationRequest()
+      onActivated: root.cancel()
     }
 
     Rectangle {
@@ -142,7 +147,7 @@ Scope {
         RowLayout {
           Layout.alignment: Qt.AlignRight
           spacing: 8
-          Chip { text: "Cancel"; onClicked: if (root.flow) root.flow.cancelAuthenticationRequest() }
+          Chip { text: "Cancel"; onClicked: root.cancel() }
           Chip {
             text: "Allow"
             primary: true

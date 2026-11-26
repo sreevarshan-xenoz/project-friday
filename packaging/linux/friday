@@ -286,7 +286,8 @@ friday_wallpaper_show() {
   f=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
   old=$(cat "$pidfile" 2>/dev/null || true)
   if [ -n "$f" ] && [ -f "$f" ] && command -v swaybg >/dev/null 2>&1; then
-    swaybg -m fill -i "$f" >/dev/null 2>&1 </dev/null &
+    # (9>&-: swaybg mustn't hold the lock for its whole life.)
+    swaybg -m fill -i "$f" >/dev/null 2>&1 </dev/null 9>&- &
     echo $! >"$pidfile"
     disown 2>/dev/null || true
     sleep 0.3

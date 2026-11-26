@@ -2877,7 +2877,10 @@ hash="$HOME/wall #2.jpg"; : >"$hash"
 "${dk_env[@]}" bash "$F" wallpaper "$hash" >/dev/null; "${dk_env[@]}" bash "$F" lock
 contains "a \"#\" in the wallpaper's name is escaped for hyprlock" "$(cat "$lock")" "path = $HOME/wall ##2.jpg"
 # Two quick changes (Super+Ctrl+T held) leave exactly one swaybg.
-"${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null & "${dk_env[@]}" bash "$F" wallpaper "$HOME/wall-two.jpg" >/dev/null; wait
+# (Each within 10 s: a lock held by swaybg would stall the second for good.)
+timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null & timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$HOME/wall-two.jpg" >/dev/null; wait
+s0=$SECONDS; timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null
+(( SECONDS - s0 < 5 )) && pass "a wallpaper change doesn't wait on the running swaybg" || fail "a wallpaper change waited $((SECONDS - s0)) s (swaybg holds the lock)"
 n=$(ps -eo args= | grep -c "^/bin/bash $S/swaybg ")
 [[ $n == 1 ]] && pass "quick wallpaper changes leave one swaybg" || fail "quick changes left $n swaybg running"
 "${dk_env[@]}" bash "$F" wallpaper off >/dev/null; rm -f "$S/swaybg" "$S/hyprlock" "$S/pgrep"
