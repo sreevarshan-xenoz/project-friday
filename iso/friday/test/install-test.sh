@@ -170,6 +170,8 @@ check() { # check <description> <remote command>: pass when the command exits 0
 
 echo "installed system"
 check "computer is named friday" '[ "$(cat /etc/hostname)" = friday ]'
+check "home folders are private" '[ "$(stat -c %a ~)" = 700 ] && [ "$(stat -c %a /root)" = 700 ]'
+check "CPU microcode is installed" 'pacman -Q intel-ucode amd-ucode >/dev/null'
 check "Hyprland session is running" 'hyprctl version >/dev/null'
 check "Hyprland reports no deprecated options" 'out=$(hyprctl deprecated-config); echo "$out"; echo "$out" | grep -qi "all good"'
 check "Hyprland reports no config errors" 'out=$(hyprctl configerrors); echo "$out"; [ -z "$(echo "$out" | tr -d "[:space:]")" ]'
