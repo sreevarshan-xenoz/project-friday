@@ -50,7 +50,17 @@ internal sealed class Supervised : IDisposable
         lock (_lock)
         {
             _stopping = false;
-            StartLocked();
+            try
+            {
+                StartLocked();
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or InvalidOperationException or UnauthorizedAccessException)
+            {
+                // A missing or quarantined exe, or a locked log, must not take
+                // the tray down with it: say so, as for a crash loop.
+                Write($"--- {_name} could not start: {e.Message}");
+                GaveUp?.Invoke(_name);
+            }
         }
     }
 
