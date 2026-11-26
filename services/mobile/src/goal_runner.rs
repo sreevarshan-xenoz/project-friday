@@ -122,6 +122,7 @@ impl ConfirmationGate {
                 tool: tool.to_string(),
                 action: exact_action.to_string(),
                 preview,
+                quoted: self.quoted,
             });
         }
         Err(ToolResult::error(format!(
@@ -3720,6 +3721,27 @@ fn completed_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_question_from_quoted_text_says_so_so_act_still_asks() {
+        let mut gate = ConfirmationGate {
+            quoted: true,
+            ..Default::default()
+        };
+        assert!(gate.check_or_record("terminal", "git push").is_err());
+        let p = gate.pending.as_ref().expect("a question");
+        assert!(p.quoted);
+        let json = serde_json::to_value(p).unwrap();
+        assert_eq!(json["quoted"], true);
+
+        let mut plain = ConfirmationGate::default();
+        assert!(plain.check_or_record("terminal", "git push").is_err());
+        let json = serde_json::to_value(plain.pending.as_ref().unwrap()).unwrap();
+        assert!(
+            json.get("quoted").is_none(),
+            "only quoted asks carry the flag"
+        );
+    }
     use crate::web_search::SearchResult;
 
     /// A tiny canned search-results page in the endpoint's HTML shape.

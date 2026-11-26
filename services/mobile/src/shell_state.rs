@@ -96,6 +96,10 @@ pub struct NeedConfirmation {
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+    /// The goal carried outside text (a selection, a page, a window's text)
+    /// that may hold instructions: this always asks, whatever the autonomy.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quoted: bool,
 }
 
 /// The live file-backed contract the shell reads.
