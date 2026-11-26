@@ -479,7 +479,7 @@ internal sealed class TrayContext : ApplicationContext
             // "How do I … in FRIDAY?": FRIDAY's guide goes with the question.
             if (kind == AskKind.Plain && context is null && !web && Asking.AboutFriday(asked))
             {
-                var docs = await Ctl.RunAsync(_install, ["docs", "--", asked], TimeSpan.FromSeconds(3));
+                var docs = await Ctl.RunAsync(_install, ["docs", "--", "-"], TimeSpan.FromSeconds(3), input: asked);
                 if (docs.Ok)
                     request = Asking.WithDocs(request, docs.Output);
             }
@@ -499,7 +499,8 @@ internal sealed class TrayContext : ApplicationContext
     private async Task RewriteAsync(IntPtr target, string question, string how, string text)
     {
         Notify("FRIDAY", $"Rewriting: {how}…", ToolTipIcon.Info);
-        var r = await Ctl.RunAsync(_install, Asking.CtlArguments(AskKind.Plain, question, Rewrite.Request(how, text)), TimeSpan.FromMinutes(3));
+        var rewriteRequest = Rewrite.Request(how, text);
+        var r = await Ctl.RunAsync(_install, Asking.CtlArguments(AskKind.Plain, question, rewriteRequest), TimeSpan.FromMinutes(3), input: rewriteRequest);
         var outcome = Asking.Interpret(AskKind.Plain, question, r.ExitCode, r.Output);
         var rewritten = outcome.Ok ? Rewrite.Clean(outcome.Answer) : "";
         if (rewritten.Length == 0)
@@ -921,7 +922,8 @@ internal sealed class TrayContext : ApplicationContext
             Asking.CtlArguments(kind, question, request, confirm, options),
             TimeSpan.FromSeconds(240),
             onLine,
-            inflight.Token);
+            inflight.Token,
+            kind == AskKind.Screen ? null : request);
         if (_inflight == inflight)
             _inflight = null;
         poll.Stop();
@@ -1205,7 +1207,7 @@ internal sealed class TrayContext : ApplicationContext
         {
             form.Proposal = MemoryProposal.From(question);
             form.Remember += proposal => _ = Ctl.RunAsync(_install,
-                ["goal", "--wait", $"remember that {MemoryProposal.InOwnWords(proposal)}"], TimeSpan.FromSeconds(60));
+                ["goal", "--wait", "-"], TimeSpan.FromSeconds(60), input: $"remember that {MemoryProposal.InOwnWords(proposal)}");
         }
         form.AskAgain += () => _ = AskAsync(kind);
         // "That was wrong" shows only while its switch is on (Settings, General).

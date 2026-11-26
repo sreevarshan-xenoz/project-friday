@@ -1814,6 +1814,18 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("local-ai") {
         return local_ai(&raw[1..]);
     }
+    // `docs ... -`, `show ... -` and `browser find -`: the question comes on
+    // stdin, so it isn't on the command line for every program to read.
+    let mut raw = raw;
+    let browser_find = raw.first().map(String::as_str) == Some("browser")
+        && raw.get(1).map(String::as_str) == Some("find");
+    if (browser_find || matches!(raw.first().map(String::as_str), Some("docs" | "show")))
+        && raw.last().map(String::as_str) == Some("-")
+    {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
+        *raw.last_mut().unwrap() = text.trim_end_matches('\n').to_string();
+    }
     if raw.first().map(String::as_str) == Some("docs") {
         return docs(&raw[1..]);
     }
@@ -2428,7 +2440,14 @@ async fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(if json { 2 } else { 1 });
     };
     let sub = sub.clone();
-    let goal_words = positional.into_iter().skip(1).collect::<Vec<_>>();
+    let mut goal_words = positional.into_iter().skip(1).collect::<Vec<_>>();
+    // `goal -`: the question comes on stdin, so it (and any selection or page
+    // text with it) isn't on the command line for every program to read.
+    if sub == "goal" && goal_words.len() == 1 && goal_words[0] == "-" {
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text);
+        goal_words = vec![text.trim_end_matches('\n').to_string()];
+    }
     if json {
         // The contract (specs/ask-json.md) is for a question only, and its
         // one object leaves no room for {"partial": ...} lines.

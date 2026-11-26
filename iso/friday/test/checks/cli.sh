@@ -12,6 +12,9 @@ export HOME="$W/home" XDG_STATE_HOME="" XDG_CONFIG_HOME="" USER="${USER:-tester}
 
 cat >"$S/friday-ctl" <<EOF
 #!/bin/bash
+# "-": the question comes on stdin (as the real friday-ctl reads it).
+printf '%s\n' "\$*" >> "$LOG.argv"
+args=(); for a in "\$@"; do if [[ "\$a" == - ]]; then args+=("\$(cat)"); else args+=("\$a"); fi; done; set -- "\${args[@]}"
 if [[ "\$1" == say ]]; then
   if [[ "\$2" == --voices ]]; then printf 'friday-ctl-say --voices\n' >> "$LOG"; printf '0 Bella\n1 Heart\n'; exit 0; fi
   if [[ "\$2" == "-" ]]; then text=\$(cat); else text="\${*:2}"; fi
@@ -2040,6 +2043,11 @@ bash "$F" autonomy act >/dev/null
 : >"$LOG"; GATED_QUOTED=1 CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
 contains "act: a question from quoted text still asks" "$(cat "$LOG")" "run=Run"
 bash "$F" autonomy ask-risky >/dev/null
+# The question (and any selection with it) never goes on friday-ctl's command line.
+: >"$LOG.argv"; : >"$LOG"; bash "$F" ask "where is the quarterly report kept"; sleep 0.4
+if grep -q "quarterly report" "$LOG.argv"; then fail "the question was on friday-ctl's command line"
+elif grep -q "quarterly report" "$LOG"; then pass "the question reaches friday-ctl on stdin, not its command line"
+else fail "the question never reached friday-ctl"; fi
 contains "ask-all says it asks before every action" "$(bash "$F" autonomy ask-all)" "asks before every action"
 grep -qx 'FRIDAY_AUTONOMY=ask-all' "$HOME/.config/friday/friday.env" && pass "the daemon gets FRIDAY_AUTONOMY" || fail "FRIDAY_AUTONOMY not in friday.env"
 bash "$F" autonomy ask-risky >/dev/null

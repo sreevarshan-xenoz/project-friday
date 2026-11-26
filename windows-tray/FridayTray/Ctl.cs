@@ -24,8 +24,9 @@ internal static class Ctl
 {
     /// <param name="onLine">Called with each line friday-ctl prints, as it prints it.</param>
     /// <param name="cancel">Stops friday-ctl (a newer question replaced this one).</param>
+    /// <param name="input">Written to friday-ctl's stdin (the question for `goal ... -`).</param>
     public static async Task<CtlResult> RunAsync(Install install, IEnumerable<string> args, TimeSpan timeout,
-        Action<string>? onLine = null, CancellationToken cancel = default)
+        Action<string>? onLine = null, CancellationToken cancel = default, string? input = null)
     {
         var psi = new ProcessStartInfo(install.Ctl)
         {
@@ -33,6 +34,7 @@ internal static class Ctl
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = input is not null,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
@@ -49,6 +51,11 @@ internal static class Ctl
         catch (Exception e)
         {
             return new CtlResult(false, $"cannot reach daemon: could not start friday-ctl ({e.Message})", -1);
+        }
+        if (input is not null)
+        {
+            using (var stdin = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
+                await stdin.WriteAsync(input);
         }
         var stdout = ReadLinesAsync(p.StandardOutput, onLine);
         var stderr = p.StandardError.ReadToEndAsync();
