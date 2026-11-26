@@ -1287,7 +1287,7 @@ friday_phone() {
         echo "Phone: on, $n paired (answer FRIDAY from it: turn on \"Answer my questions\" on the phone's Devices page)"
       fi
       if [ "$pd" = pocketdesk ]; then
-        echo "This is Pocketdesk. FRIDAY Mobile replaces it: sudo pacman -S friday-mobile, then friday phone on (pair the phone again)."
+        echo "This is Pocketdesk. FRIDAY Mobile replaces it: friday phone off, sudo pacman -S friday-mobile, then friday phone on (pair the phone again)."
       fi
       ;;
     on|pair)
