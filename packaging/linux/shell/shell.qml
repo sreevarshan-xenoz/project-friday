@@ -13,11 +13,13 @@ import qs.answer
 import qs.tour
 import qs.bar
 import qs.captions
+import qs.desktop
 import qs.drawers
 import qs.notifications
 import qs.osd
 import qs.ring
 import qs.settings
+import qs.common
 import qs.services
 
 ShellRoot {
@@ -38,6 +40,12 @@ ShellRoot {
   }
 
   SettingsWindow {}
+
+  // The administrator-password card (shell.json "polkit": true).
+  LazyLoader {
+    active: Config.polkit
+    PolkitDialog {}
+  }
 
   // Touch the singletons that must run from the start: the notification
   // server has to own the bus name before anything notifies.
