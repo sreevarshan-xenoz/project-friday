@@ -123,6 +123,19 @@ public class AnswerLogTests
         Assert.DoesNotContain("sk-SECRET", File.ReadAllText(paths.AnswersFile));
         Assert.DoesNotContain("sk-SECRET", File.ReadAllText(paths.LastAnswerFile));
     }
+
+    [Fact]
+    public void When_masking_cannot_run_nothing_is_kept()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        var paths = new Paths(Path.Combine(dir, "local"), Path.Combine(dir, "roaming"));
+        var log = new AnswerLog(paths, _ => null);
+        log.Remember("is sk-SECRET still valid?");
+        Assert.Empty(log.History());
+        log.Save("is sk-SECRET still valid?", null, new AskOutcome(true, "sk-SECRET looks revoked", null, false), DateTime.Now);
+        Assert.False(File.Exists(paths.AnswersFile));
+        Assert.False(File.Exists(paths.LastAnswerFile));
+    }
 }
 
 public class ProviderMappingTests
