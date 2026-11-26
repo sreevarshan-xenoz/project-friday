@@ -286,6 +286,7 @@ internal sealed partial class SettingsWindow : FluentWindow
             "Lets FRIDAY control apps that run as administrator (an app like that ignores keys and clicks from a normal program). " +
             "Everything FRIDAY does then runs with those rights, so only turn it on if you need it. " +
             "Windows asks for permission once, now; after that FRIDAY starts at every sign-in without asking. " +
+            "It runs a copy of FRIDAY kept under Program Files, which only administrators can change; after FRIDAY updates, turn this off and on again to update the copy. " +
             (Elevation.IsElevated() ? "FRIDAY is running as administrator now." : "Takes effect the next time FRIDAY starts."),
             admin,
             SetAdministrator);

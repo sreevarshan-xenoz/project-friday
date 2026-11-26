@@ -72,6 +72,41 @@ public class SettingsTests
     }
 
     [Fact]
+    public void The_task_runs_a_copy_only_administrators_can_change()
+    {
+        Assert.Equal(Path.Combine(@"C:\Program Files", "FRIDAY", "Administrator start"), ElevatedStart.MachineDir(@"C:\Program Files"));
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var from = Path.Combine(root, "user-install");
+        var to = Path.Combine(root, "machine-copy");
+        Directory.CreateDirectory(Path.Combine(from, "shell"));
+        File.WriteAllText(Path.Combine(from, "friday-tray.exe"), "tray");
+        File.WriteAllText(Path.Combine(from, "shell", "x.dll"), "dll");
+        Directory.CreateDirectory(to);
+        File.WriteAllText(Path.Combine(to, "stale.exe"), "old");
+        ElevatedStart.CopyInstall(from, to);
+        Assert.Equal("tray", File.ReadAllText(Path.Combine(to, "friday-tray.exe")));
+        Assert.Equal("dll", File.ReadAllText(Path.Combine(to, "shell", "x.dll")));
+        Assert.False(File.Exists(Path.Combine(to, "stale.exe")), "the old copy is replaced, not merged");
+        Assert.Equal(from, File.ReadAllText(Path.Combine(to, ElevatedStart.SourceFile)));
+    }
+
+    [Fact]
+    public void An_update_since_the_copy_was_made_is_noticed()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var from = Path.Combine(root, "user-install");
+        var to = Path.Combine(root, "machine-copy");
+        Directory.CreateDirectory(from);
+        File.WriteAllText(Path.Combine(from, "friday-tray.exe"), "1.0");
+        ElevatedStart.CopyInstall(from, to);
+        string? Version(string f) => File.Exists(f) ? File.ReadAllText(f) : null;
+        Assert.False(ElevatedStart.CopyIsOld(to, Version));
+        File.WriteAllText(Path.Combine(from, "friday-tray.exe"), "1.1");
+        Assert.True(ElevatedStart.CopyIsOld(to, Version));
+        Assert.False(ElevatedStart.CopyIsOld(Path.Combine(root, "no-copy"), Version));
+    }
+
+    [Fact]
     public void Names_with_markup_characters_cannot_break_the_task_xml()
     {
         var xml = ElevatedStart.TaskXml(@"PC\a&b<c>", @"C:\Program Files\A&B\friday-tray.exe");
