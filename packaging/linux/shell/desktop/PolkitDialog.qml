@@ -23,8 +23,15 @@ Scope {
     if (root.flow) root.flow.cancelAuthenticationRequest();
   }
 
+  // polkit's own wording ("Authentication is needed to run `/usr/bin/x' as
+  // the super user") in plain words; anything else as it comes.
+  function plain(message) {
+    const m = /^Authentication is needed to run [`'"](.+?)['"] as the super user$/.exec(message.trim());
+    return m ? "An app wants to run " + m[1] + " as administrator." : message;
+  }
+
   function send() {
-    if (!root.flow || !root.flow.isResponseRequired) return;
+    if (!root.flow || !root.flow.isResponseRequired || input.text === "") return;
     const answer = input.text;
     input.text = "";
     root.flow.submit(answer);
@@ -68,13 +75,25 @@ Scope {
       border.width: 1
       border.color: Theme.alpha(Theme.accent, 0.5)
 
-      // Shake on a wrong password.
-      transform: Translate { id: shake }
+      // Comes in with a short fade and rise; shakes on a wrong password
+      // (long enough to read as a shake, not a flicker).
+      opacity: 0
+      transform: [Translate { id: shake }, Translate { id: rise }]
+      Connections {
+        target: win
+        function onVisibleChanged() { if (win.visible) appear.restart(); else card.opacity = 0; }
+      }
+      ParallelAnimation {
+        id: appear
+        NumberAnimation { target: card; property: "opacity"; from: 0; to: 1; duration: Theme.medium; easing.type: Theme.easing }
+        NumberAnimation { target: rise; property: "y"; from: 12; to: 0; duration: Theme.medium; easing.type: Theme.easing }
+      }
       SequentialAnimation {
         id: shakeAnim
-        NumberAnimation { target: shake; property: "x"; to: -8; duration: Theme.fast / 3 }
-        NumberAnimation { target: shake; property: "x"; to: 8; duration: Theme.fast / 3 }
-        NumberAnimation { target: shake; property: "x"; to: 0; duration: Theme.fast / 3 }
+        NumberAnimation { target: shake; property: "x"; to: -10; duration: Theme.motion ? 60 : 0; easing.type: Easing.OutQuad }
+        NumberAnimation { target: shake; property: "x"; to: 10; duration: Theme.motion ? 80 : 0; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: shake; property: "x"; to: -5; duration: Theme.motion ? 70 : 0; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: shake; property: "x"; to: 0; duration: Theme.motion ? 60 : 0; easing.type: Easing.OutQuad }
       }
       Connections {
         target: root.flow
@@ -101,7 +120,7 @@ Scope {
         }
         Label {
           Layout.fillWidth: true
-          text: root.flow ? root.flow.message : ""
+          text: root.flow ? root.plain(root.flow.message) : ""
           wrapMode: Text.Wrap
           elide: Text.ElideNone
           color: Theme.subtext
@@ -112,7 +131,9 @@ Scope {
           radius: Theme.radiusS
           color: Theme.glassWell
           border.width: 1
-          border.color: input.activeFocus ? Theme.accent : Theme.glassEdge
+          // Red after a wrong password until something new is typed.
+          border.color: root.flow && root.flow.failed && input.text === "" ? Theme.error
+            : input.activeFocus ? Theme.accent : Theme.glassEdge
           TextInput {
             id: input
             anchors.fill: parent
@@ -151,6 +172,9 @@ Scope {
           Chip {
             text: "Allow"
             primary: true
+            // Nothing to send until a password is typed.
+            enabled: input.text !== ""
+            opacity: enabled ? 1 : 0.45
             onClicked: root.send()
           }
         }

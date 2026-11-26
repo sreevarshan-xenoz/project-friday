@@ -20,6 +20,11 @@ FocusScope {
     { icon: Icons.power, label: "Power off", cmd: ["systemctl", "poweroff"], danger: true }
   ]
   property int selected: 0
+  // Restart and Power off ask twice: the first press arms the row ("Press
+  // again to …"), a second within 3 s runs it. Moving off it disarms.
+  property int armed: -1
+  onSelectedChanged: armed = -1
+  Timer { id: disarm; interval: 3000; onTriggered: root.armed = -1 }
 
   implicitWidth: 240
   implicitHeight: column.implicitHeight
@@ -31,6 +36,11 @@ FocusScope {
   Keys.onEnterPressed: run(selected)
 
   function run(i) {
+    if (actions[i].danger && armed !== i) {
+      armed = i;
+      disarm.restart();
+      return;
+    }
     root.done();
     Quickshell.execDetached(actions[i].cmd);
   }
@@ -67,8 +77,19 @@ FocusScope {
           anchors.fill: parent
           anchors.leftMargin: 14
           spacing: 14
-          Glyph { text: item.modelData.icon; size: 19; color: item.sel ? item.hue : Theme.subtext }
-          Label { Layout.fillWidth: true; text: item.modelData.label; font.weight: item.sel ? Font.DemiBold : Font.Normal }
+          // A fixed column, so every label starts at the same x.
+          Glyph {
+            Layout.preferredWidth: 24
+            text: item.modelData.icon
+            size: 19
+            color: item.sel ? item.hue : item.modelData.danger ? Theme.alpha(Theme.error, 0.75) : Theme.subtext
+          }
+          Label {
+            Layout.fillWidth: true
+            text: root.armed === item.index ? "Press again to " + item.modelData.label.toLowerCase() : item.modelData.label
+            color: root.armed === item.index ? Theme.error : Theme.text
+            font.weight: item.sel ? Font.DemiBold : Font.Normal
+          }
         }
         MouseArea {
           anchors.fill: parent
