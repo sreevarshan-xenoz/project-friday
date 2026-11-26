@@ -417,6 +417,19 @@ friday_lock_conf() {
     echo "    halign = center"
     echo "    valign = center"
     echo "}"
+    if [ "$hfmt" = %I ]; then
+      # 12-hour: am or pm, small, after the minutes.
+      echo "label {"
+      echo "    monitor ="
+      echo "    text = cmd[update:60000] date +%P"
+      echo "    color = rgb($subtext)"
+      echo "    font_size = 22"
+      echo "    font_family = Michroma"
+      echo "    position = 290, 105"
+      echo "    halign = center"
+      echo "    valign = center"
+      echo "}"
+    fi
     echo "label {"
     echo "    monitor ="
     echo "    text = cmd[update:60000] date +\"%A, %d %B\""

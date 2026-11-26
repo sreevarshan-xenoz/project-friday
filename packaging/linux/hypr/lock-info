@@ -17,9 +17,10 @@ case "$1" in
     done ;;
   media)
     command -v playerctl >/dev/null 2>&1 || exit 0
-    [ "$(playerctl status 2>/dev/null)" = Playing ] || exit 0
-    t=$(playerctl metadata title 2>/dev/null); a=$(playerctl metadata artist 2>/dev/null)
-    [ -n "$t" ] || exit 0
+    # One call: status, title and artist (a tab between each).
+    line=$(playerctl metadata --format '{{status}}	{{title}}	{{artist}}' 2>/dev/null) || exit 0
+    st=${line%%	*}; rest=${line#*	}; t=${rest%%	*}; a=${rest#*	}
+    [ "$st" = Playing ] && [ -n "$t" ] || exit 0
     printf '󰎈  %s%s\n' "$t" "${a:+  ·  $a}" | esc ;;
 esac
 exit 0

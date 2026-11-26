@@ -2880,6 +2880,7 @@ contains "what's playing shows on the lock screen" "$(cat "$lock")" "lock-info m
 jq '.clock24h = false' "$HOME/.config/friday/shell.json" >"$HOME/sj" && mv "$HOME/sj" "$HOME/.config/friday/shell.json"
 "${dk_env[@]}" bash "$F" lock
 contains "a 12-hour clock when shell.json says so" "$(cat "$lock")" "date +%I"
+contains "with am or pm" "$(cat "$lock")" "date +%P"
 contains "on the wallpaper" "$(cat "$lock")" "path = $img"
 # hyprlang reads "#" as a comment: a wallpaper named with one is escaped.
 hash="$HOME/wall #2.jpg"; : >"$hash"
