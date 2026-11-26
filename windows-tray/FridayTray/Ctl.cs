@@ -71,9 +71,10 @@ internal static class Ctl
     /// <summary>Reads <paramref name="text"/> aloud (a new one replaces the one being read). Doesn't wait.</summary>
     /// <summary>
     /// <paramref name="text"/> with keys and passwords masked by friday-ctl
-    /// (the daemon's own rule), or as it is when that can't run in 3 s.
+    /// (the daemon's own rule), or null when that can't run in 3 s: then
+    /// nothing is kept, rather than keeping it unmasked.
     /// </summary>
-    public static string Mask(Install install, string text)
+    public static string? Mask(Install install, string text)
     {
         try
         {
@@ -89,17 +90,17 @@ internal static class Ctl
             psi.ArgumentList.Add("-");
             using var p = Process.Start(psi);
             if (p is null)
-                return text;
+                return null;
             using (var input = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
                 input.Write(text);
             var read = p.StandardOutput.ReadToEndAsync();
             if (!p.WaitForExit(3000) || p.ExitCode != 0 || !read.Wait(500))
-                return text;
-            return string.IsNullOrEmpty(read.Result) ? text : read.Result;
+                return null;
+            return string.IsNullOrEmpty(read.Result) ? null : read.Result;
         }
         catch (Exception)
         {
-            return text;
+            return null;
         }
     }
 
