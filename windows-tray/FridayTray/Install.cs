@@ -37,6 +37,13 @@ internal sealed class Install
         // PATH: give them the one Windows has now, not the one from sign-in.
         if (!env.ContainsKey("PATH"))
             env["PATH"] = AgentClis.SearchPath();
+        // The host's pipe is named per person (their account's SID), so a
+        // second signed-in person's FRIDAY never meets this one's.
+        if (!env.ContainsKey("FRIDAY_SESSION"))
+        {
+            using var me = System.Security.Principal.WindowsIdentity.GetCurrent();
+            env["FRIDAY_SESSION"] = me.User?.Value ?? Environment.UserName;
+        }
         return env;
     }
 
