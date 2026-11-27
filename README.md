@@ -299,7 +299,7 @@ pacman refuses any package or database that key didn't sign. On Windows, install
 
 | Command | What it does |
 |---|---|
-| `friday ask [--selection\|--screen\|--region\|--web] [text]` | Ask (what the hotkeys run; `--web` searches the web). In the question, `@screen` (`@tab` in a browser), `@clip`, `@web` or `@file <path>` pick what goes with it; "what changed today?" reads the project's git and the package log |
+| `friday ask [--selection\|--screen\|--region\|--web] [text]` | Ask (what the hotkeys run; `--web` searches the web). In the question, `@screen` (`@tab` in a browser), `@clip`, `@web` or `@file <path>` (text, PDF, or a Word, PowerPoint, Excel, OpenDocument, RTF or EPUB document) pick what goes with it; "what changed today?" reads the project's git and the package log |
 | `friday app-instructions [list\|set <app> <text>\|rm <app>]` | How FRIDAY answers in one app ("in kitty, commands only"), shown in what an answer used |
 | `friday upgrade [status\|now\|auto on\|off]` | Upgrade the system safely, FRIDAY included, reverting if FRIDAY or the desktop breaks |
 | `friday setup-ai [--keep-others\|--only] [provider]` | Use your own API key |

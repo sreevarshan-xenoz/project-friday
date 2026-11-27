@@ -9,6 +9,8 @@ repository.workspace = true
 description = "FRIDAY daemon (friday-linux-daemon, friday-daemon.exe on Windows) and friday-ctl: runs asks, publishes state.json, token-gated loopback ingress"
 
 [dependencies]
+# Word, PowerPoint, Excel, OpenDocument, RTF and EPUB as text (MIT).
+anydoc = "0.2"
 friday-core = { path = "../../core" }
 friday-capabilities = { path = "../capabilities" }
 friday-actions = { path = "../action-runtime" }
