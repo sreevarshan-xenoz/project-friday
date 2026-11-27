@@ -21,6 +21,7 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [duxlabs-dev/dux-shell](https://github.com/duxlabs-dev/dux-shell), [43PR/dotfiles](https://github.com/43PR/dotfiles) | MIT | the orbit bar style: two floating pills, the middle left clear (an idea, `bar/Bar.qml`) |
 | [Trendorin/yami](https://github.com/Trendorin/yami) | MIT | the statusline bar style: one slim line of segments along the bottom, like a terminal's (an idea, `bar/StatuslineBar.qml`) |
 | [zDyant/HyprNova](https://github.com/zDyant/HyprNova), [natepayn3/Vitreus](https://github.com/natepayn3/Vitreus) | MIT | the glaze bar style: one floating glass bar with a lit rim (an idea, `bar/Bar.qml`) |
+| [saatvik333/niri-dotfiles](https://github.com/saatvik333/niri-dotfiles), [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) | MIT | the blade bar style: a hairline that follows the workspace, sliders that slide open on hover (an idea, `bar/Bar.qml`, `bar/SlideControl.qml`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 

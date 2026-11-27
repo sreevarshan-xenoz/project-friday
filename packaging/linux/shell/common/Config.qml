@@ -45,7 +45,7 @@ Singleton {
   property var featuresOff: []
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
-  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze"]
+  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade"]
   readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "contrast", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
   readonly property string palette: pick("palette", "core") === "friday" ? "ember" : pick("palette", "core") === "omarchy" ? "classic" : pick("palette", "core")

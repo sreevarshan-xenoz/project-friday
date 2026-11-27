@@ -26,6 +26,9 @@ PanelWindow {
   readonly property bool orbit: Theme.style === "orbit"
   // Glaze: one floating glass bar along the top, with a lit rim.
   readonly property bool glaze: Theme.style === "glaze"
+  // Blade: flush, a hairline under it that follows the active workspace in
+  // FRIDAY's colour, and volume and brightness that slide open on hover.
+  readonly property bool blade: Theme.style === "blade"
 
   // Auto-hide (Look > Auto-hide bar; shell.json "barAutoHide"; off unless
   // turned on): the bar slides off its edge and windows get the space; the
@@ -167,6 +170,27 @@ PanelWindow {
   Corner { visible: !Theme.floating && !Theme.keystone && bar.corners; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
   Corner { visible: !Theme.floating && !Theme.keystone && bar.corners; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
 
+  // Blade: the hairline along the bar's lower edge, and the lit part of it
+  // under the active workspace (the signal colour while FRIDAY works).
+  Rectangle {
+    visible: bar.blade
+    x: strip.x; width: strip.width
+    y: strip.y + strip.height - 1
+    height: 1
+    color: Theme.glassEdge
+  }
+  Rectangle {
+    visible: bar.blade && workspaces.activeW > 0
+    x: leftGroup.x + workspaces.x + workspaces.activeX - 4
+    width: workspaces.activeW + 8
+    y: strip.y + strip.height - 2
+    height: 2
+    radius: 1
+    color: Friday.working ? Theme.signal : Theme.accent
+    Behavior on x { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+    Behavior on color { ColorAnimation { duration: Theme.medium } }
+  }
+
   // The island style's pills: one behind each group.
   component Pill: Rectangle {
     required property Item group
@@ -240,6 +264,20 @@ PanelWindow {
 
     ToolButtons {}
     ResourcesChip {}
+    SlideControl {
+      visible: bar.blade && Audio.ready
+      icon: Audio.muted || Audio.volume <= 0.001 ? Icons.volumeOff : Icons.volumeHigh
+      value: Audio.volume
+      tooltip: "Volume"
+      onMoved: v => Audio.setVolume(v)
+    }
+    SlideControl {
+      visible: bar.blade && Brightness.ready
+      icon: Icons.brightness
+      value: Brightness.value
+      tooltip: "Brightness"
+      onMoved: v => Brightness.set(v)
+    }
     Tray {}
     MediaChip {}
     StatusCluster {

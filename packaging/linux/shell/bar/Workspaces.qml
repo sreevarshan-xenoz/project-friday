@@ -65,6 +65,12 @@ Item {
     return Math.max(n, activeId);
   }
 
+  // The active slot, and where it sits in this item (the blade's hairline
+  // follows it).
+  property Item activeSlot: null
+  readonly property real activeX: activeSlot ? row.x + activeSlot.x : 0
+  readonly property real activeW: activeSlot ? activeSlot.width : 0
+
   visible: hyprland || wsets.length > 0
   implicitWidth: vertical ? 24 : row.implicitWidth + 16
   implicitHeight: vertical ? row.implicitHeight + 16 : 24
@@ -115,6 +121,7 @@ Item {
         implicitHeight: root.vertical ? (showIcon ? (active ? 26 : 18) : active ? 22 : 8) : dotH
         Behavior on implicitWidth { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
         Behavior on implicitHeight { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+        Binding { when: slot.active; target: root; property: "activeSlot"; value: slot; restoreMode: Binding.RestoreNone }
 
         Rectangle {
           anchors.fill: parent
