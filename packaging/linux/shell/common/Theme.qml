@@ -28,6 +28,8 @@ import Quickshell.Io
 //   island  three floating pills along the top; drawers are floating cards
 //   dock    one floating bar along the bottom; drawers rise from it
 //   rail    one slim column down the left edge; drawers open beside it
+//   keystone  no bar across the screen: one notch hangs from the middle of
+//           the top edge with the workspaces, FRIDAY and the status in it
 Singleton {
   id: root
 
@@ -233,6 +235,8 @@ Singleton {
   readonly property int railWidth: 46
   // How far from the left edge windows and desktop things start.
   readonly property int leftReach: rail ? railWidth : 0
+  // The keystone: everything in one notch at the top's middle.
+  readonly property bool keystone: style === "keystone"
   readonly property bool barAtBottom: style === "dock"
   readonly property int barInset: floating ? 10 : 0
   // How far from its screen edge the bar's far side is (windows start there).

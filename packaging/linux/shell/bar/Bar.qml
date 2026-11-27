@@ -13,6 +13,8 @@ import qs.services
 //           concave corners
 //   island  the three groups as separate floating pills along the top
 //   dock    one floating bar along the bottom
+//   keystone  one notch hanging from the middle of the top edge, the groups
+//           pulled in around FRIDAY's island (the rest of the edge is free)
 PanelWindow {
   id: bar
 
@@ -32,7 +34,7 @@ PanelWindow {
   // Only the bar takes input: the strip, or in the island style just its
   // pills, so clicks between them reach the windows below.
   mask: Region {
-    item: bar.island ? null : strip
+    item: bar.island ? null : Theme.keystone ? notch : strip
     Region { item: bar.island ? leftPill : null }
     Region { item: centre.capsule }
     Region { item: bar.island ? rightPill : null }
@@ -49,12 +51,29 @@ PanelWindow {
     }
     height: Theme.barHeight
     radius: Theme.floating ? height / 2 : 0
-    color: bar.island ? "transparent" : Theme.glass
+    color: bar.island || Theme.keystone ? "transparent" : Theme.glass
     border.width: Theme.style === "dock" ? 1 : 0
     border.color: Theme.glassEdge
   }
-  Corner { visible: !Theme.floating; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
-  Corner { visible: !Theme.floating; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
+  // Keystone: the notch, flush with the top edge, round at the bottom, with
+  // a small curve on each side where it meets the edge.
+  Rectangle {
+    id: notch
+    visible: Theme.keystone
+    x: leftGroup.x - 16
+    width: rightGroup.x + rightGroup.width + 16 - x
+    y: -radius
+    height: Theme.barHeight + radius
+    radius: 16
+    color: Theme.glass
+    border.width: 1
+    border.color: Theme.glassEdge
+  }
+  Corner { visible: Theme.keystone; size: 10; leftSide: false; x: notch.x - size; y: 0 }
+  Corner { visible: Theme.keystone; size: 10; leftSide: true; x: notch.x + notch.width; y: 0 }
+
+  Corner { visible: !Theme.floating && !Theme.keystone; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
+  Corner { visible: !Theme.floating && !Theme.keystone; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
 
   // The island style's pills: one behind each group.
   component Pill: Rectangle {
@@ -75,7 +94,14 @@ PanelWindow {
   // Left.
   RowLayout {
     id: leftGroup
-    anchors { left: strip.left; leftMargin: 10; verticalCenter: strip.verticalCenter }
+    // Keystone: just left of the island instead of at the screen's edge.
+    anchors {
+      left: Theme.keystone ? undefined : strip.left
+      right: Theme.keystone ? centre.left : undefined
+      leftMargin: 10
+      rightMargin: 14
+      verticalCenter: strip.verticalCenter
+    }
     spacing: 10
 
     IconButton {
@@ -87,7 +113,7 @@ PanelWindow {
       onClicked: Shell.toggle("launcher", bar.modelData.name)
     }
     Workspaces { id: workspaces; screen: bar.modelData }
-    WindowTitle { Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
+    WindowTitle { visible: !Theme.keystone; Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
   }
 
   // Centre: the aperture island (bar/Island.qml), centred on the bar but
@@ -98,14 +124,22 @@ PanelWindow {
     screenName: bar.modelData.name
     growUp: Theme.barAtBottom
     y: strip.y + 4
-    x: Math.round(Math.max(leftGroup.x + workspaces.x + workspaces.width + 24,
+    x: Theme.keystone ? Math.round(strip.x + strip.width / 2 - width / 2)
+      : Math.round(Math.max(leftGroup.x + workspaces.x + workspaces.width + 24,
       strip.x + strip.width / 2 - width / 2))
   }
 
   // Right.
   RowLayout {
     id: rightGroup
-    anchors { right: strip.right; rightMargin: 10; verticalCenter: strip.verticalCenter }
+    // Keystone: just right of the island.
+    anchors {
+      right: Theme.keystone ? undefined : strip.right
+      left: Theme.keystone ? centre.right : undefined
+      rightMargin: 10
+      leftMargin: 14
+      verticalCenter: strip.verticalCenter
+    }
     spacing: 12
 
     Tray {}
