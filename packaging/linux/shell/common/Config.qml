@@ -50,6 +50,8 @@ Singleton {
   readonly property int workspaces: Math.max(1, Math.min(10, Number(pick("workspaces", 5)) || 5))
   readonly property int notificationTimeout: Math.max(2, Number(pick("notificationTimeout", 6)) || 6)
   readonly property bool polkit: pick("polkit", false) === true
+  // The workspaces show their apps' icons (off unless turned on).
+  readonly property bool workspaceIcons: pick("workspaceIcons", false) === true
 
   function pick(key, fallback) {
     const v = root.settings[key];

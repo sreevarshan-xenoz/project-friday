@@ -5,6 +5,7 @@ import Quickshell.Hyprland
 import Quickshell.WindowManager
 import qs.common
 import qs.components
+import qs.services
 
 // Workspace slots for this bar's monitor: the active one is a wide ember
 // bar, occupied ones a solid dot, empty ones a faint dot. Click to go there,
@@ -12,6 +13,11 @@ import qs.components
 // and any compositor with the ext-workspace protocol) from Quickshell's
 // WindowManager, which lists the workspaces the compositor has. Hidden when
 // neither knows any.
+//
+// With workspace icons on (Look > Workspace icons; shell.json
+// "workspaceIcons"), a workspace in use shows the icon of its first window
+// instead of a dot, the active one on an accent pill (an idea from
+// end-4/dots-hyprland, see CREDITS.md). Hyprland only; elsewhere the dots stay.
 Item {
   id: root
 
@@ -37,6 +43,20 @@ Item {
       if (w.id > 0 && (!w.monitor || !monitor || w.monitor === monitor))
         ids[w.id] = true;
     return ids;
+  }
+  readonly property bool icons: Config.workspaceIcons && hyprland
+  // A workspace's first window's app id, from Hyprland's client list.
+  readonly property var firstApp: {
+    const out = {};
+    if (!icons)
+      return out;
+    for (const t of Hyprland.toplevels.values) {
+      const ws = t.workspace;
+      const cls = t.lastIpcObject ? t.lastIpcObject.class : "";
+      if (ws && ws.id > 0 && cls && out[ws.id] === undefined)
+        out[ws.id] = cls;
+    }
+    return out;
   }
   readonly property int slots: {
     let n = Config.workspaces;
@@ -87,16 +107,31 @@ Item {
         // The compositor lists only workspaces that exist, so all are in use.
         readonly property bool used: root.hyprland ? root.occupied[wsId] === true : true
 
-        implicitWidth: root.vertical ? 8 : active ? 22 : 8
-        implicitHeight: root.vertical ? (active ? 22 : 8) : 8
+        readonly property string app: root.firstApp[wsId] || ""
+        readonly property bool showIcon: root.icons && app !== ""
+        readonly property real dotW: showIcon ? (active ? 26 : 18) : active ? 22 : 8
+        readonly property real dotH: showIcon ? 18 : 8
+        implicitWidth: root.vertical ? (showIcon ? 18 : 8) : dotW
+        implicitHeight: root.vertical ? (showIcon ? (active ? 26 : 18) : active ? 22 : 8) : dotH
         Behavior on implicitWidth { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
         Behavior on implicitHeight { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
 
         Rectangle {
           anchors.fill: parent
-          radius: height / 2
-          color: slot.active ? Theme.accent : slot.used ? Theme.subtext : Theme.overlay
+          radius: Math.min(width, height) / 2
+          color: slot.active ? Theme.accent
+            : slot.showIcon ? "transparent"
+            : slot.used ? Theme.subtext : Theme.overlay
           Behavior on color { ColorAnimation { duration: Theme.medium } }
+        }
+        Image {
+          visible: slot.showIcon
+          anchors.centerIn: parent
+          width: 14; height: 14
+          sourceSize: Qt.size(28, 28)
+          asynchronous: true
+          source: slot.showIcon ? AppIcons.source((DesktopEntries.heuristicLookup(slot.app) || {}).icon || slot.app) : ""
+          opacity: slot.active ? 1 : 0.75
         }
         MouseArea {
           anchors.fill: parent
