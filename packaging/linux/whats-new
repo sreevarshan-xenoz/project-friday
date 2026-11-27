@@ -3,6 +3,13 @@
 # update FRIDAY shows the lines since the version you last saw, once
 # (friday whats-new shows them again).
 ## 0.10.0
+- Setup lets you pick your file manager, terminal, video, picture and PDF apps, code editors and AI coding agents (VS Code, Zed, Claude Code, Codex, OpenCode, agy, Cline, Kilo…), and more apps.
+- Setup asks your git name and email, and can keep an encrypted daily backup in a private GitHub repo (friday backup github).
+- Installing shows a real progress bar: how much is downloaded, how fast, and each app as it goes in.
+- Smoother FRIDAY Shell: drawers open quickly and slide from one to the next, notifications fade out, the answer card no longer bounces while it streams.
+- Restart and Power off ask you to press again; the password card is clearer.
+- Icon buttons say what they do when you hover them; text is easier to read; the clock stays centred over the calendar.
+- The lock screen shows a staggered clock, what's playing and the battery.
 - Super+I opens FRIDAY Settings, with every key and every command in one place.
 - Click one control and ask about it: only that part of the window is sent.
 - An answer about a window shows the exact line it relied on.
