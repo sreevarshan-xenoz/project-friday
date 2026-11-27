@@ -220,6 +220,8 @@ friday ask --web "..."   search the web and answer with sources
 friday ask --follow-up   ask about the last answer
 ```
 
+A web page you ask about ("summarize https://…") is read by FRIDAY's headless Chrome. `friday obscura install` adds obscura, a much smaller browser (about 30 MB instead of hundreds, a third of a second for an ordinary page), which then reads pages first; Chrome still steps in for a page it can't read. It comes from obscura's own release, a version FRIDAY pins and checks by checksum (CI tries each new one before it moves the pin). It refuses addresses on your own network, like Chrome does here. `friday obscura remove` takes it away; `friday feature obscura-reader off` keeps it but stops using it.
+
 Web search happens only when you ask for it, and never in private mode.
 
 ## Privacy

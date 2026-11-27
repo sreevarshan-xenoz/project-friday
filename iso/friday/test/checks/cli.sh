@@ -1433,6 +1433,28 @@ contains "an answer done plays the done cue" "$(cat "$LOG")" "complete.oga"
 : >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "hit the limit"; sleep 0.5
 contains "a failed answer plays the failed cue" "$(cat "$LOG")" "dialog-error.oga"
 bash "$F" sounds off >/dev/null; rm -f "$S/pw-play"
+echo "pinned tools (friday obscura)"
+TL="$W/tools"; mkdir -p "$TL/pkg"; printf '#!/bin/sh\necho "obscura 9.9.9"\n' >"$TL/pkg/obscura"; chmod +x "$TL/pkg/obscura"
+tar -czf "$TL/good.tar.gz" -C "$TL/pkg" obscura
+good=$(sha256sum "$TL/good.tar.gz" | cut -d' ' -f1)
+jq -n --arg s "$good" '{obscura: {repo: "example/obscura", version: "9.9.9", assets: {"linux-x86_64": {name: "o.tar.gz", sha256: $s}}}}' >"$TL/tools.json"
+# curl stands in for the download: it copies $TOOL_SRC to the -o path.
+[ -e "$S/curl" ] && mv "$S/curl" "$S/curl.keep"
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { cp "$TOOL_SRC" "$2"; exit 0; }; shift; done\nexit 1\n' >"$S/curl"; chmod +x "$S/curl"
+TD="$W/tooldata"
+if [ "$(uname -m)" = x86_64 ]; then
+  out=$(XDG_DATA_HOME="$TD" FRIDAY_TOOLS_JSON="$TL/tools.json" TOOL_SRC="$TL/good.tar.gz" bash "$F" obscura install 2>&1)
+  contains "tools: a download matching its pin installs" "$out" "checksum verified"
+  contains "tools: status shows the installed version" "$(XDG_DATA_HOME="$TD" bash "$F" obscura status)" "obscura 9.9.9"
+  printf 'tampered' >"$TL/bad.tar.gz"
+  out=$(XDG_DATA_HOME="$TD/2" FRIDAY_TOOLS_JSON="$TL/tools.json" TOOL_SRC="$TL/bad.tar.gz" bash "$F" obscura install 2>&1 || true)
+  contains "tools: a download that doesn't match its pin is refused" "$out" "doesn't match its pinned checksum"
+  if [ -e "$TD/2/friday/obscura/obscura" ]; then fail "tools: a refused download was installed anyway"; else pass "tools: a refused download leaves nothing behind"; fi
+  contains "tools: remove" "$(XDG_DATA_HOME="$TD" bash "$F" obscura remove)" "removed"
+fi
+rm -f "$S/curl"; [ -e "$S/curl.keep" ] && mv "$S/curl.keep" "$S/curl"
+jq -e '.obscura.assets["linux-x86_64"].sha256 | test("^[0-9a-f]{64}$")' "$REPO_ROOT/packaging/tools/tools.json" >/dev/null \
+  && pass "tools.json pins obscura by checksum" || fail "tools.json has no checksum for obscura"
 echo "region ask"
 printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
 : >"$LOG"; PICK="what is this chart" bash "$F" ask --region; sleep 0.3

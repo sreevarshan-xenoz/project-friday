@@ -85,6 +85,7 @@ Autonomous Agent & Cognitive Loop:
   friday retention                 How long each kind of record FRIDAY keeps stays
   friday day [today|yesterday|YYYY-MM-DD|forget <date|all>]  A short summary of a day by project, kept here
   friday dictations [copy <n>|clear]  The last 20 voice-typed texts, to get one back
+  friday obscura [install|remove|status]  A light browser FRIDAY reads web pages with (pinned, checksum-verified)
   friday sounds [on|off]           Quiet sounds for listening, an answer done, one that failed
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
@@ -1840,6 +1841,41 @@ friday_cue() { # listening|done|failed
   local f="${FRIDAY_SOUNDS_DIR:-/usr/share/sounds/freedesktop/stereo}/$name.oga"
   [ -f "$f" ] && command -v pw-play >/dev/null 2>&1 || return 0
   ( timeout 3 pw-play --volume 0.5 "$f" >/dev/null 2>&1 & ) || true
+}
+# Tools FRIDAY can add from their own releases (packaging/tools/tools.json):
+# a pinned version and checksum, moved only by the weekly check after CI
+# passes, so nothing new runs here that wasn't tested. `friday obscura`:
+# a small headless browser for reading pages (switch: obscura-reader).
+friday_tools_json() { echo "${FRIDAY_TOOLS_JSON:-/usr/share/friday/tools.json}"; }
+friday_tool_dir() { echo "${XDG_DATA_HOME:-$HOME/.local/share}/friday/$1"; }
+friday_tool() { # <name> [install|remove|status]
+  local name="$1" dir json ver repo asset sum url tmp got
+  dir=$(friday_tool_dir "$name"); json=$(friday_tools_json)
+  case "${2:-status}" in
+    status)
+      if [ -x "$dir/$name" ]; then echo "$name: installed ($("$dir/$name" --version 2>/dev/null | sed -n 1p)), in $dir"
+      else echo "$name: not installed (friday $name install)"; fi ;;
+    remove) rm -rf "$dir"; echo "$name: removed." ;;
+    install)
+      [ -f "$json" ] || { echo "friday: no tools list at $json" >&2; return 1; }
+      ver=$(jq -r --arg n "$name" '.[$n].version // empty' "$json")
+      repo=$(jq -r --arg n "$name" '.[$n].repo // empty' "$json")
+      asset=$(jq -r --arg n "$name" '.[$n].assets["linux-x86_64"].name // empty' "$json")
+      sum=$(jq -r --arg n "$name" '.[$n].assets["linux-x86_64"].sha256 // empty' "$json")
+      [ -n "$ver" ] && [ -n "$asset" ] && [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || { echo "friday: $name isn't in the tools list" >&2; return 1; }
+      [ "$(uname -m)" = x86_64 ] || { echo "friday: $name is only offered for x86_64 here" >&2; return 1; }
+      url="https://github.com/$repo/releases/download/v$ver/$asset"
+      tmp=$(mktemp -d) || return 1
+      echo "Downloading $name $ver ($asset)..."
+      if ! curl -fsSL --proto '=https' --retry 2 -o "$tmp/$asset" "$url"; then rm -rf "$tmp"; echo "friday: couldn't download $url" >&2; return 1; fi
+      got=$(sha256sum "$tmp/$asset" | cut -d' ' -f1)
+      if [ "$got" != "$sum" ]; then rm -rf "$tmp"; echo "friday: $name's download doesn't match its pinned checksum; not installed" >&2; return 1; fi
+      mkdir -p "$tmp/x" && tar -xzf "$tmp/$asset" -C "$tmp/x" || { rm -rf "$tmp"; echo "friday: couldn't unpack $asset" >&2; return 1; }
+      [ -x "$tmp/x/$name" ] || { rm -rf "$tmp"; echo "friday: $asset has no $name in it" >&2; return 1; }
+      rm -rf "$dir"; mkdir -p "$(dirname "$dir")" && mv "$tmp/x" "$dir"; rm -rf "$tmp"
+      echo "$name $ver installed in $dir (checksum verified)." ;;
+    *) echo "Usage: friday $name [install|remove|status]" >&2; return 2 ;;
+  esac
 }
 friday_sounds() { # [on|off|status]
   case "${1:-status}" in
@@ -5092,6 +5128,7 @@ voice-preview|friday voice preview on: what whisper heard opens in the ask box t
 health-page|friday health: each part of FRIDAY, whether it works here, and its switches
 voice-try|friday voice speak try [N]: hear a voice, or each in turn, before choosing; the choice stays
 state-sounds|With friday sounds on: quiet cues for listening, an answer done and one that failed
+obscura-reader|With friday obscura installed, web pages are read by it (about 30 MB) before FRIDAY's headless Chrome
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
@@ -7534,6 +7571,10 @@ $offer"
   dictations)
     # The last 20 voice-typed texts, newest first; copy one back.
     shift; friday_dictations "$@"; exit $?
+    ;;
+  obscura)
+    # A small headless browser for reading pages, from its pinned release.
+    shift; friday_tool obscura "$@"; exit $?
     ;;
   sounds)
     # Quiet cues for listening, done and failed (off unless turned on).
