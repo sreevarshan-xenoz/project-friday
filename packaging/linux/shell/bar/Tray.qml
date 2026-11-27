@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Services.SystemTray
 import Quickshell.Widgets
 import qs.common
+import qs.services
 
 // Status-notifier icons. Left click activates, right click opens the item's
 // own menu under the bar.
@@ -35,6 +36,8 @@ RowLayout {
         anchor.gravity: Edges.Bottom
         anchor.margins.top: 8
       }
+      // An open menu keeps an auto-hiding bar up.
+      Binding { when: menu.visible; target: Shell; property: "menuOpen"; value: true }
 
       MouseArea {
         anchors.fill: parent
