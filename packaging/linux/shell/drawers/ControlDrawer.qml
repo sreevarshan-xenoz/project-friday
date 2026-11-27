@@ -142,6 +142,21 @@ FocusScope {
           }
         }
       }
+      Label { Layout.topMargin: 4; text: "Dock"; font.pixelSize: Theme.fontS; color: Theme.faint }
+      Flow {
+        Layout.fillWidth: true
+        spacing: 6
+        Repeater {
+          model: [false, true]
+          Chip {
+            required property bool modelData
+            text: modelData ? "On" : "Off"
+            primary: Config.dock === modelData
+            implicitHeight: 28
+            onClicked: Config.set("dock", modelData)
+          }
+        }
+      }
       Label { Layout.topMargin: 4; text: "Colours"; font.pixelSize: Theme.fontS; color: Theme.faint }
       Flow {
         Layout.fillWidth: true

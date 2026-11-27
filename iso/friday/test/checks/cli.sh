@@ -2998,8 +2998,14 @@ conf="$HOME/.config/friday/shell.json"; rm -f "$conf"
 if [[ "$(jq -c . "$conf" 2>/dev/null)" == '{"style":"island","palette":"dawn"}' ]]; then pass "style and palette merge into shell.json"
 else fail "shell.json after style/palette: $(cat "$conf" 2>/dev/null)"; fi
 contains "style lists the choices, marking the current one" "$("${sh_env[@]}" bash "$F" shell style)" "* island"
-if "${sh_env[@]}" bash "$F" shell style neon >/dev/null 2>&1; then fail "an unknown style was accepted"
+if "${sh_env[@]}" bash "$F" shell style nosuchstyle >/dev/null 2>&1; then fail "an unknown style was accepted"
 else pass "an unknown style is refused"; fi
+contains "the dock is off unless turned on" "$("${sh_env[@]}" bash "$F" shell dock)" "Dock: off"
+"${sh_env[@]}" bash "$F" shell dock on >/dev/null
+if [[ "$(jq -r '.dock' "$conf")" == true && "$(jq -r '.style' "$conf")" == island ]]; then pass "dock on is saved beside the other settings"
+else fail "shell.json after dock on: $(cat "$conf" 2>/dev/null)"; fi
+"${sh_env[@]}" bash "$F" shell dock off >/dev/null
+contains "dock off" "$("${sh_env[@]}" bash "$F" shell dock)" "Dock: off"
 echo '{ "palette": "friday", "clock24h": false }' >"$conf"
 "${sh_env[@]}" bash "$F" shell style dock >/dev/null
 contains "other settings are kept" "$(cat "$conf")" '"clock24h": false'

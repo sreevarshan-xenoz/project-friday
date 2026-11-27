@@ -35,6 +35,7 @@ ShellRoot {
       // The top bar, or the rail down the left edge (style "rail").
       LazyLoader { active: !Theme.rail; Bar { modelData: perScreen.modelData } }
       LazyLoader { active: Theme.rail; RailBar { modelData: perScreen.modelData } }
+      LazyLoader { active: Config.dock; Dock { modelData: perScreen.modelData } }
       DrawerHost { modelData: perScreen.modelData }
       Popups { modelData: perScreen.modelData }
       AnswerPill { modelData: perScreen.modelData }

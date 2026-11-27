@@ -166,6 +166,7 @@ Desktop & System Substrate:
   friday shell overview            Every workspace with its windows (Super+Tab)
   friday shell wallpaper           Pick a wallpaper (Super+Ctrl+T)
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
+  friday shell dock [on|off]       A dock of pinned and running apps along the bottom (up at the edge)
   friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
   friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
@@ -7731,6 +7732,19 @@ $offer"
         fi ;;
       stop)
         if [ -n "$supervisor" ]; then kill -TERM "$supervisor"; else exec quickshell kill -p "$dir"; fi ;;
+      dock)
+        # The dock along the bottom (shell.json "dock"); off unless turned on.
+        conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
+        case "${2:-status}" in
+          on|off)
+            mkdir -p "$(dirname "$conf")"; tmp=$(mktemp "$conf.XXXXXX")
+            v=false; [ "$2" = on ] && v=true
+            jq --argjson v "$v" '.dock = $v' "$conf" >"$tmp" 2>/dev/null || jq -n --argjson v "$v" '{dock: $v}' >"$tmp"
+            mv -f "$tmp" "$conf"; echo "Dock: $2." ;;
+          status) if [ "$(jq -r '.dock // false' "$conf" 2>/dev/null)" = true ]; then echo "Dock: on"; else echo "Dock: off (friday shell dock on)"; fi ;;
+          *) echo "Usage: friday shell dock [on|off|status]" >&2; exit 2 ;;
+        esac
+        exit 0 ;;
       style|palette)
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
@@ -7766,7 +7780,7 @@ $offer"
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
       overview) exec quickshell -p "$dir" ipc call overview toggle ;;
       wallpaper) exec quickshell -p "$dir" ipc call wallpaper toggle ;;
-      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|dock [on|off]|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
     esac
     ;;
   daemon)
