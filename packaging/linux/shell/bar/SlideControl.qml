@@ -26,7 +26,11 @@ Item {
 
   HoverHandler { id: hover }
   WheelHandler {
-    onWheel: e => root.moved(Math.max(0, Math.min(1, root.value + (e.angleDelta.y > 0 ? 0.05 : -0.05))))
+    // Up a step or down one; a sideways scroll changes nothing.
+    onWheel: e => {
+      if (e.angleDelta.y !== 0)
+        root.moved(Math.max(0, Math.min(1, root.value + (e.angleDelta.y > 0 ? 0.05 : -0.05))));
+    }
   }
 
   Glyph {
