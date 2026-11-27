@@ -261,7 +261,7 @@ EOF
   printf '#!/bin/bash\nexit 0\n' >"$W/stub/curl"   # pretend we're online
   cat >"$W/stub/installer" <<'EOF'
 #!/bin/bash
-echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK mode=$INSTALL_MODE alongside=$ALONGSIDE_DISK size=$FRIDAY_SIZE_MB bootdefault=$BOOT_DEFAULT bitlocker_ack=$BITLOCKER_ACK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDERS] keys=[$(cut -d= -f1 <<<"$FRIDAY_AI_KEYS" | xargs)] local=[$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_MODEL:$FRIDAY_LOCAL_BUDGET_MB] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT browsers=[$BROWSERS] default_browser=$DEFAULT_BROWSER editors=[$EDITORS] agents=[$AGENTS]"
+echo "INSTALLER-ENV disk=$TARGET_DISK erase=$ERASE_DISK mode=$INSTALL_MODE alongside=$ALONGSIDE_DISK size=$FRIDAY_SIZE_MB bootdefault=$BOOT_DEFAULT bitlocker_ack=$BITLOCKER_ACK host=$FRIDAY_HOSTNAME user=$USERNAME pw=$PASSWORD tz=$TIMEZONE kb=$KEYBOARD ai=[$FRIDAY_AI_PROVIDERS] keys=[$(cut -d= -f1 <<<"$FRIDAY_AI_KEYS" | xargs)] local=[$FRIDAY_LOCAL_ENGINE:$FRIDAY_LOCAL_MODEL:$FRIDAY_LOCAL_BUDGET_MB] autologin=$AUTOLOGIN encrypt=$ENCRYPT interactive=$FRIDAY_INTERACTIVE session=$SESSION style=$SHELL_STYLE desktop=$FEAT_DESKTOP tasks=$FEAT_TASKS appname=$FEAT_APPNAME screentext=$FEAT_SCREENTEXT browsers=[$BROWSERS] default_browser=$DEFAULT_BROWSER editors=[$EDITORS] agents=[$AGENTS] files=$FILE_MANAGER term=$TERMINAL_APP video=$VIDEO_PLAYER pdf=$PDF_VIEWER more=[$MORE_APPS] git=[$GIT_NAME|$GIT_EMAIL|$GITHUB_USER] ghbackup=$GITHUB_BACKUP"
 EOF
   # friday-git is on the live ISO: the real CLI, on a fake 16 GB machine with no GPU.
   mkdir -p "$W/hw/proc"
@@ -357,6 +357,24 @@ browsers "" chromium
 contains "default browser is chromium when none chosen" "$(cat "$W/mnt/home/alice/.config/mimeapps.list" 2>/dev/null)" "x-scheme-handler/https=chromium.desktop"
 
 # A failed AUR build is skipped with a way out, and the install goes on
+# Everyday apps: the picks open their files, the terminal picked comes first
+# and Super+E opens the file manager picked.
+eh="$W/everyday-home"; rm -rf "$eh"; mkdir -p "$eh/.config/hypr"
+cp "$ROOT/../etc/skel/.config/xdg-terminals.list" "$eh/.config/"
+cp "$ROOT/../etc/skel/.config/hypr/bindings.lua" "$eh/.config/hypr/"
+( set -euo pipefail
+  eval "$(sed -n '/^friday_mime_default() {/,/^}/p;/^friday_everyday_defaults() {/,/^}/p' "$ROOT/installer")"
+  FILE_MANAGER=yazi TERMINAL_APP=ghostty VIDEO_PLAYER=vlc IMAGE_VIEWER=none PDF_VIEWER=okular
+  friday_everyday_defaults "$eh" )
+mime=$(cat "$eh/.config/mimeapps.list" 2>/dev/null)
+contains "the file manager picked opens folders" "$mime" "inode/directory=yazi.desktop"
+contains "the video player picked opens videos" "$mime" "video/mp4=vlc.desktop"
+contains "the PDF viewer picked opens PDFs" "$mime" "application/pdf=okularApplication_pdf.desktop"
+if grep -q '^image/' "$eh/.config/mimeapps.list"; then fail "no image viewer means no image default"; else pass "no image viewer means no image default"; fi
+[[ "$(grep -v '^#' "$eh/.config/xdg-terminals.list" | head -n1)" == com.mitchellh.ghostty.desktop ]] \
+  && pass "the terminal picked comes first" || fail "the terminal picked comes first"
+contains "Super+E opens the file manager picked" "$(cat "$eh/.config/hypr/bindings.lua")" 'o.bind("SUPER + E", "Files", "xdg-terminal-exec yazi")'
+
 # Editors and agents picked in setup: repo ones pacstrapped with Node when an
 # npm one is picked, AUR ones built like the browsers.
 rm -f "$W/pacstrap.log"

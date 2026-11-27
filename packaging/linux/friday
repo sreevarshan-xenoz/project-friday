@@ -77,6 +77,7 @@ Autonomous Agent & Cognitive Loop:
   friday sent [N]                  Show what left this machine for AI providers (egress log)
   friday usage [days]              Calls, failures, free-limit hits and speed per AI provider
   friday backup [folder|check <f>|restore <f>]  Back up settings, memory and history; check or restore one
+  friday backup github [setup|now|restore|status|off]  Encrypted daily backup to a private GitHub repo
   friday risks                     What FRIDAY may do on its own, what asks first and what never runs
   friday verify-log                Check the action log wasn't changed: each action is chained to the one before
   friday import [--apply]          Keys and a model from OpenCode, Aider or your environment: preview, then add
@@ -1198,6 +1199,123 @@ friday_agents_offer() {
   [ "$action" = connect ] || return 0
   for n in "${names[@]}"; do cmd+="friday connect $n; echo; "; done
   foot -T "FRIDAY · connect your agents" bash -c "${cmd}read -rsn1 -p 'Press any key to close.'"
+}
+
+# `friday backup github [setup|now|restore|status|off]`: FRIDAY's backup
+# (settings, memory, history; no API keys) in a private GitHub repo of yours,
+# <you>/friday-backup, encrypted with age before it leaves this computer.
+# The key stays here (~/.config/friday/backup-age.key); setup shows it once
+# to keep somewhere safe, since a restore on a new computer needs it. A
+# daily timer pushes a new backup; git keeps the earlier ones.
+friday_backup_github_dir() { echo "${XDG_DATA_HOME:-$HOME/.local/share}/friday/backup-github"; }
+friday_backup_github() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/friday" dir key conf repo
+  dir=$(friday_backup_github_dir); key="$cfg/backup-age.key"; conf="$cfg/backup-github"
+  repo=$(sed -n 's/^repo=//p' "$conf" 2>/dev/null || true)
+  case "${1:-status}" in
+    setup)
+      local tool
+      for tool in git gh age age-keygen; do
+        command -v "$tool" >/dev/null 2>&1 || { echo "GitHub backup needs $tool: sudo pacman -S git github-cli age" >&2; return 1; }
+      done
+      gh auth status >/dev/null 2>&1 || gh auth login --web --git-protocol https || { echo "Not signed in to GitHub; nothing set up." >&2; return 1; }
+      gh auth setup-git >/dev/null 2>&1 || true
+      local user; user=$(gh api user --jq .login) || { echo "Couldn't read your GitHub username." >&2; return 1; }
+      repo="$user/friday-backup"
+      if ! gh repo view "$repo" >/dev/null 2>&1; then
+        gh repo create "$repo" --private --description "FRIDAY backup (encrypted with age; only the key on your computer opens it)" >/dev/null \
+          || { echo "Couldn't create the private repo $repo." >&2; return 1; }
+        echo "Made a private repo: https://github.com/$repo"
+      fi
+      mkdir -p "$cfg"
+      if [ ! -s "$key" ]; then
+        (umask 077; age-keygen -o "$key" 2>/dev/null)
+        echo
+        echo "Your backup key. Keep it somewhere safe (a password manager): restoring on"
+        echo "a new computer needs it, and without it nobody, you included, can open the backups."
+        echo
+        grep '^AGE-SECRET-KEY-' "$key"
+        echo
+        read -rsn1 -p "Press any key once it's saved." </dev/tty || true; echo
+      fi
+      printf 'repo=%s\n' "$repo" >"$conf"
+      # A daily push, as a user timer (catches up after the computer was off).
+      local units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+      mkdir -p "$units"
+      # The friday that set it up, with ~/.local/bin on the PATH (systemd's is short).
+      printf '[Unit]\nDescription=FRIDAY backup to GitHub\nAfter=network-online.target\n\n[Service]\nType=oneshot\nEnvironment=PATH=%%h/.local/bin:/usr/local/bin:/usr/bin:/bin\nExecStart=%s backup github now\n' \
+        "$(command -v friday || readlink -f "$0")" >"$units/friday-backup-github.service"
+      printf '[Unit]\nDescription=FRIDAY backup to GitHub, daily\n\n[Timer]\nOnCalendar=daily\nPersistent=true\nRandomizedDelaySec=1h\n\n[Install]\nWantedBy=timers.target\n' \
+        >"$units/friday-backup-github.timer"
+      systemctl --user daemon-reload 2>/dev/null || true
+      systemctl --user enable --now friday-backup-github.timer >/dev/null 2>&1 || true
+      rm -f "$cfg/github-backup-wanted"
+      friday_backup_github now ;;
+    now)
+      [ -n "$repo" ] && [ -s "$key" ] || { echo "GitHub backup isn't set up: friday backup github setup" >&2; return 1; }
+      if [ ! -d "$dir/.git" ]; then
+        mkdir -p "$(dirname "$dir")"
+        gh repo clone "$repo" "$dir" >/dev/null 2>&1 || git clone -q "https://github.com/$repo.git" "$dir" || { echo "Couldn't get $repo." >&2; return 1; }
+      fi
+      git -C "$dir" pull -q --ff-only >/dev/null 2>&1 || true
+      local tmp; tmp=$(mktemp -d)
+      # Only the encrypted file leaves this folder; the plain one never outlives it.
+      if ! friday-ctl backup "$tmp/b" >/dev/null \
+          || ! tar -C "$tmp/b" -czf - . | age -r "$(age-keygen -y "$key")" >"$dir/friday-backup.tar.gz.age.new"; then
+        rm -rf "$tmp" "$dir/friday-backup.tar.gz.age.new"; echo "The backup failed." >&2; return 1
+      fi
+      rm -rf "$tmp"
+      mv -f "$dir/friday-backup.tar.gz.age.new" "$dir/friday-backup.tar.gz.age"
+      git -C "$dir" add friday-backup.tar.gz.age
+      if git -C "$dir" diff --cached --quiet; then echo "Nothing changed since the last backup."; return 0; fi
+      git -C "$dir" -c user.name="$(git config user.name || echo FRIDAY)" -c user.email="$(git config user.email || echo friday@localhost)" \
+        commit -q -m "FRIDAY backup $(date '+%Y-%m-%d %H:%M')"
+      # To the repo's own default branch (main for a new, empty one).
+      local branch
+      branch=$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true); branch=${branch#origin/}
+      git -C "$dir" push -q -u origin "HEAD:${branch:-main}" \
+        || { echo "Couldn't push to $repo (signed in? gh auth status)." >&2; return 1; }
+      echo "Backed up to https://github.com/$repo (encrypted)." ;;
+    restore)
+      [ -n "$repo" ] || repo="${2:-}"
+      [ -n "$repo" ] || { echo "usage: friday backup github restore <you>/friday-backup" >&2; return 1; }
+      if [ ! -s "$key" ]; then
+        local k
+        read -rsp "Paste your backup key (AGE-SECRET-KEY-…): " k </dev/tty || { echo; echo "No key; nothing restored." >&2; return 1; }
+        echo
+        [[ "$k" == AGE-SECRET-KEY-* ]] || { echo "That isn't a backup key." >&2; return 1; }
+        mkdir -p "$cfg"; (umask 077; printf '%s\n' "$k" >"$key")
+      fi
+      [ -d "$dir/.git" ] || gh repo clone "$repo" "$dir" >/dev/null 2>&1 || git clone -q "https://github.com/$repo.git" "$dir" || { echo "Couldn't get $repo." >&2; return 1; }
+      git -C "$dir" pull -q --ff-only >/dev/null 2>&1 || true
+      local tmp; tmp=$(mktemp -d); mkdir -p "$tmp/b"
+      age -d -i "$key" "$dir/friday-backup.tar.gz.age" | tar -C "$tmp/b" -xzf - \
+        || { rm -rf "$tmp"; echo "Couldn't open the backup (the right key?)." >&2; return 1; }
+      local b; b=$(find "$tmp/b" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+      local rc=0
+      friday-ctl backup restore "${b:-$tmp/b}" || rc=$?
+      rm -rf "$tmp"; printf 'repo=%s\n' "$repo" >"$conf"; return $rc ;;
+    status)
+      if [ -z "$repo" ]; then echo "GitHub backup is off. Turn it on: friday backup github setup"; return 0; fi
+      echo "Backing up daily to https://github.com/$repo (encrypted)."
+      if [ -d "$dir/.git" ]; then
+        echo "Last backup: $(git -C "$dir" log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M' 2>/dev/null || echo never)"
+      fi ;;
+    off)
+      systemctl --user disable --now friday-backup-github.timer >/dev/null 2>&1 || true
+      rm -f "$conf"
+      echo "GitHub backup is off. The repo and your key are kept (friday backup github setup turns it on again)." ;;
+    *) echo "usage: friday backup github [setup|now|restore|status|off]" >&2; return 2 ;;
+  esac
+}
+# First login: offer to set up the GitHub backup picked in setup.
+friday_github_backup_offer() {
+  [ -e "${XDG_CONFIG_HOME:-$HOME/.config}/friday/github-backup-wanted" ] || return 0
+  local action
+  action=$(notify-send -a FRIDAY -t 30000 -A setup="Set it up" "Back up FRIDAY to GitHub?" \
+    "You asked for backups in a private GitHub repo. Sign in to GitHub once and FRIDAY pushes an encrypted backup every day." 2>/dev/null || true)
+  [ "$action" = setup ] || return 0
+  foot -T "FRIDAY · GitHub backup" bash -c "friday backup github setup; echo; read -rsn1 -p 'Press any key to close.'"
 }
 
 friday_connect() {
@@ -3356,6 +3474,7 @@ friday_welcome() {
   # The AI coding agents picked in setup: offer to connect them (in the
   # background, beside the tour).
   friday_agents_offer &
+  friday_github_backup_offer &
   local name action
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
   local free=true
@@ -7159,6 +7278,7 @@ $offer"
     # `friday backup restore <folder>` (checks first, keeps what it replaces).
     shift
     friday_feature_on backup || { echo "Backups are turned off (friday feature backup on)."; exit 0; }
+    if [ "${1:-}" = github ]; then shift; friday_backup_github "$@"; exit; fi
     exec friday-ctl backup "$@"
     ;;
   verify-log)

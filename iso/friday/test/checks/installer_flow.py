@@ -51,6 +51,22 @@ STEPS = [
     (2, CTRL_U + "mybox" + ENTER),
     (2, CTRL_U + "Bob" + ENTER),  # invalid username (uppercase)
     (2, CTRL_U + "alice" + ENTER),
+    *(
+        [
+            (2, "Alice Example" + ENTER),  # git name
+            (2, "not-an-email" + ENTER),  # rejected
+            (2, CTRL_U + "alice@example.com" + ENTER),
+            (2, "alice-gh" + ENTER),  # GitHub username
+            (2, "y"),  # back up to GitHub: yes
+        ]
+        if MULTI
+        else [
+            (2, ENTER),  # git name: skip
+            (2, ENTER),  # email: skip
+            (2, ENTER),  # GitHub username: skip
+            (2, ENTER),  # GitHub backup: default No
+        ]
+    ),
     (2, "abc" + ENTER),
     (2, "abd" + ENTER),  # mismatch
     (2, "secret1" + ENTER),
@@ -78,6 +94,13 @@ STEPS = [
             (1, ENTER),
             (3, "x"),  # agents: All of these
             (1, ENTER),
+            (3, DOWN + ENTER),  # files: Thunar
+            (2, ENTER),  # terminal: Kitty
+            (2, DOWN * 3 + ENTER),  # videos: None
+            (2, ENTER),  # pictures: Loupe
+            (2, DOWN + ENTER),  # PDFs: Zathura
+            (3, DOWN * 3 + "x"),  # more apps: Obsidian
+            (1, ENTER),
             (6, DOWN + "x"),  # AI: Gemini
             (1, DOWN + "x"),  # Groq
             (1, DOWN * 6 + "x"),  # Local AI (last)
@@ -92,6 +115,12 @@ STEPS = [
             (4, ENTER),  # browsers: default (Chromium only)
             (3, ENTER),  # editors: none
             (3, ENTER),  # agents: none
+            (3, ENTER),  # files: Nautilus
+            (2, ENTER),  # terminal: Kitty
+            (2, ENTER),  # videos: mpv
+            (2, ENTER),  # pictures: Loupe
+            (2, ENTER),  # PDFs: Papers
+            (3, ENTER),  # more apps: none
             (6, ENTER),  # AI: OpenCode Zen (first, default)
             (3, ENTER),  # no key: free models
         ]
@@ -178,6 +207,11 @@ if MULTI:
             "review shows chosen browsers": "Zen (default)" in text and "Brave" in text,
             "review shows the editor picked": "Editors     Zed" in text,
             "All of these picks every agent": "OpenCode, Claude Code, Codex, Gemini CLI" in text,
+            "a bad email is refused": "doesn't look like an email address" in text,
+            "review shows git and the backup": (
+                "Alice Example <alice@example.com> · GitHub alice-gh · backups to GitHub" in text
+            ),
+            "review shows everyday apps": "Everyday    Thunar · Kitty · Loupe · Zathura" in text,
         }
     )
 else:
@@ -205,9 +239,28 @@ browser_spec = (
         ("default_browser", "zen"),
         ("editors", "[zed]"),
         ("agents", "[opencode claude codex gemini agy cline kilo]"),
+        ("files", "thunar"),
+        ("term", "kitty"),
+        ("video", "none"),
+        ("pdf", "zathura"),
+        ("more", "[obsidian]"),
+        ("git", "[Alice Example|alice@example.com|alice-gh]"),
+        ("ghbackup", "true"),
     ]
     if MULTI
-    else [("browsers", "[]"), ("default_browser", "chromium"), ("editors", "[]"), ("agents", "[]")]
+    else [
+        ("browsers", "[]"),
+        ("default_browser", "chromium"),
+        ("editors", "[]"),
+        ("agents", "[]"),
+        ("files", "nautilus"),
+        ("term", "kitty"),
+        ("video", "mpv"),
+        ("pdf", "papers"),
+        ("more", "[]"),
+        ("git", "[||]"),
+        ("ghbackup", "false"),
+    ]
 )
 for key, want in (
     ai_spec

@@ -28,6 +28,19 @@ DEFAULT_BROWSER="chromium"
 # Code editors and AI coding agents (ids, space-separated; see step_apps).
 EDITORS=""
 AGENTS=""
+# Everyday defaults (one each) and more apps (ids; see step_apps).
+FILE_MANAGER="nautilus"
+TERMINAL_APP="kitty"
+VIDEO_PLAYER="mpv"
+IMAGE_VIEWER="loupe"
+PDF_VIEWER="papers"
+MORE_APPS=""
+# Git: the name and email commits carry, the GitHub username, and whether
+# FRIDAY backs up to a private GitHub repo (set up at first login).
+GIT_NAME=""
+GIT_EMAIL=""
+GITHUB_USER=""
+GITHUB_BACKUP="false"
 FRIDAY_AI_PROVIDERS="" FRIDAY_AI_KEYS=""
 FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_LABEL=""
 AUTOLOGIN="false"
@@ -277,6 +290,34 @@ step_identity() {
     friday_err "Start with a lowercase letter; then lowercase letters, digits, - or _. System names like root are taken."
   done
   friday_ok "Username: $USERNAME"
+}
+
+# Like Omarchy: who your git commits are from, and an offer to keep FRIDAY's
+# backups in a private GitHub repo. All of it optional.
+step_git() {
+  echo
+  friday_say "For git (optional): the name and email your commits carry. Leave them empty to skip."
+  local v
+  v=$(gum input --value="$GIT_NAME" --prompt="Name for git › " --placeholder="Ada Lovelace") || leave_menu
+  GIT_NAME=$(tr -d '"\\' <<<"$v")
+  while true; do
+    v=$(gum input --value="$GIT_EMAIL" --prompt="Email for git › " --placeholder="you@example.com") || leave_menu
+    if [[ -z "$v" || "$v" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then GIT_EMAIL="$v"; break; fi
+    friday_err "That doesn't look like an email address."
+  done
+  while true; do
+    v=$(gum input --value="$GITHUB_USER" --prompt="GitHub username › " --placeholder="optional") || leave_menu
+    if [[ -z "$v" || "$v" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]]; then GITHUB_USER="$v"; break; fi
+    friday_err "GitHub usernames are letters, digits and hyphens."
+  done
+  [[ -n "$GIT_NAME$GIT_EMAIL" ]] && friday_ok "Git: ${GIT_NAME:-no name} <${GIT_EMAIL:-no email}>"
+  if gum confirm --default=false --affirmative="Yes, back up" --negative="No" \
+      "Back up FRIDAY's settings, memory and history to a private GitHub repo? (encrypted; you sign in to GitHub after setup)"; then
+    GITHUB_BACKUP=true
+    friday_ok "GitHub backup: set up at first login (friday backup github setup)"
+  else
+    GITHUB_BACKUP=false
+  fi
 }
 
 step_security() {
@@ -535,6 +576,87 @@ FRIDAY_AGENTS=(
   "kilo|Kilo (free models or your Kilo account)"
 )
 
+# What people most often pick differently, with FRIDAY OS's choice first.
+FRIDAY_FILE_MANAGERS=(
+  "nautilus|Nautilus (GNOME Files)"
+  "thunar|Thunar (light and quick)"
+  "dolphin|Dolphin (KDE: split view and tabs)"
+  "nemo|Nemo (Cinnamon's)"
+  "yazi|Yazi (in the terminal)"
+)
+FRIDAY_TERMINALS=(
+  "kitty|Kitty (FRIDAY can explain a failed command in it)"
+  "foot|Foot (the lightest)"
+  "alacritty|Alacritty"
+  "ghostty|Ghostty"
+  "wezterm|WezTerm"
+)
+FRIDAY_VIDEO_PLAYERS=(
+  "mpv|mpv (light and keyboard-driven)"
+  "vlc|VLC (plays almost anything)"
+  "celluloid|Celluloid (mpv in a simple window)"
+  "none|None"
+)
+FRIDAY_IMAGE_VIEWERS=(
+  "loupe|Loupe (GNOME's image viewer)"
+  "imv|imv (minimal)"
+  "gwenview|Gwenview (KDE's)"
+  "none|None"
+)
+FRIDAY_PDF_VIEWERS=(
+  "papers|Papers (GNOME's document viewer)"
+  "zathura|Zathura (keyboard-driven)"
+  "okular|Okular (KDE: notes and forms)"
+  "none|None"
+)
+FRIDAY_MORE=(
+  "libreoffice|Office · LibreOffice"
+  "onlyoffice|Office · OnlyOffice (from the AUR)"
+  "obsidian|Notes · Obsidian"
+  "bitwarden|Passwords · Bitwarden"
+  "keepassxc|Passwords · KeePassXC"
+  "discord|Chat · Discord"
+  "telegram|Chat · Telegram"
+  "signal|Chat · Signal"
+  "slack|Chat · Slack (from the AUR)"
+  "thunderbird|Mail · Thunderbird"
+  "spotify|Music · Spotify"
+  "obs|Recording · OBS Studio"
+)
+
+# friday_pick_one <current id> <id|label>...: one pick, the current one
+# under the cursor; prints its id.
+friday_pick_one() {
+  local current="$1" row id label pick=""
+  shift
+  local -a labels=() sel_arg=()
+  for row in "$@"; do
+    id=${row%%|*} label=${row#*|}
+    labels+=("$label")
+    [[ "$id" == "$current" ]] && sel_arg=(--selected="$label")
+  done
+  pick=$(printf '%s\n' "${labels[@]}" \
+    | gum choose --cursor="$FRIDAY_CURSOR" --height=$(( ${#labels[@]} + 1 )) "${sel_arg[@]}") || pick=""
+  for row in "$@"; do
+    [[ "${row#*|}" == "$pick" ]] && { echo "${row%%|*}"; return; }
+  done
+  echo "$current"
+}
+
+# friday_everyday_label: the five defaults, short.
+friday_everyday_label() {
+  local out="" pair
+  for pair in "$FILE_MANAGER:FRIDAY_FILE_MANAGERS" "$TERMINAL_APP:FRIDAY_TERMINALS" \
+      "$VIDEO_PLAYER:FRIDAY_VIDEO_PLAYERS" "$IMAGE_VIEWER:FRIDAY_IMAGE_VIEWERS" "$PDF_VIEWER:FRIDAY_PDF_VIEWERS"; do
+    local -n list="${pair#*:}"
+    local name
+    name=$(friday_apps_label "${pair%%:*}" "${list[@]}")
+    [[ "$name" == none || "$name" == None ]] || out+="${out:+ · }$name"
+    unset -n list
+  done
+  echo "${out:-none}"
+}
+
 # friday_pick_many <current ids> <id|label>...: a gum list with "All of these"
 # first, the current ids ticked; prints the ids picked.
 friday_pick_many() {
@@ -596,6 +718,28 @@ step_apps() {
   echo
   AGENTS=$(friday_pick_many "$AGENTS" "${FRIDAY_AGENTS[@]}")
   friday_ok "Agents: $(friday_apps_label "$AGENTS" "${FRIDAY_AGENTS[@]}")"
+  screen 8 "EVERYDAY APPS"
+  friday_head "Which apps open your things?"
+  friday_say "One of each. FRIDAY OS's choice is first; Enter keeps it."
+  echo
+  friday_say "Files (Super+E)"
+  FILE_MANAGER=$(friday_pick_one "$FILE_MANAGER" "${FRIDAY_FILE_MANAGERS[@]}")
+  friday_say "Terminal (Super+Return)"
+  TERMINAL_APP=$(friday_pick_one "$TERMINAL_APP" "${FRIDAY_TERMINALS[@]}")
+  friday_say "Videos"
+  VIDEO_PLAYER=$(friday_pick_one "$VIDEO_PLAYER" "${FRIDAY_VIDEO_PLAYERS[@]}")
+  friday_say "Pictures"
+  IMAGE_VIEWER=$(friday_pick_one "$IMAGE_VIEWER" "${FRIDAY_IMAGE_VIEWERS[@]}")
+  friday_say "PDFs"
+  PDF_VIEWER=$(friday_pick_one "$PDF_VIEWER" "${FRIDAY_PDF_VIEWERS[@]}")
+  friday_ok "$(friday_everyday_label)"
+  screen 8 "MORE APPS"
+  friday_head "Anything else you use?"
+  friday_say "Pick any, or none: office, notes, passwords, chat, mail, music."
+  friday_note "  Press x to turn a line on or off, Enter to go on. All of these picks every line."
+  echo
+  MORE_APPS=$(friday_pick_many "$MORE_APPS" "${FRIDAY_MORE[@]}")
+  friday_ok "More: $(friday_apps_label "$MORE_APPS" "${FRIDAY_MORE[@]}")"
 }
 
 step_ai() {
@@ -771,6 +915,9 @@ review() {
       "Browsers    $(friday_browsers_label)" \
       "Editors     $(friday_apps_label "$EDITORS" "${FRIDAY_EDITORS[@]}")" \
       "Agents      $(friday_apps_label "$AGENTS" "${FRIDAY_AGENTS[@]}")" \
+      "Everyday    $(friday_everyday_label)" \
+      "More apps   $(friday_apps_label "$MORE_APPS" "${FRIDAY_MORE[@]}")" \
+      "Git         $([[ -n "$GIT_NAME$GIT_EMAIL" ]] && echo "${GIT_NAME:-no name} <${GIT_EMAIL:-no email}>" || echo "not set")$([[ -n "$GITHUB_USER" ]] && echo " · GitHub $GITHUB_USER")$([[ $GITHUB_BACKUP == true ]] && echo " · backups to GitHub")" \
       "Allowed     $(friday_features_label)" \
       "AI          $FRIDAY_AI_LABEL"
     echo
@@ -783,7 +930,7 @@ review() {
     echo
     case "$(gum choose --cursor="$FRIDAY_CURSOR" \
         "Install FRIDAY OS" "Change disk" "Change names" "Change password" \
-        "Change region" "Change desktop" "Change what FRIDAY may do" "Change apps" "Change AI" "Quit setup")" in
+        "Change region" "Change desktop" "Change what FRIDAY may do" "Change apps" "Change git and backup" "Change AI" "Quit setup")" in
       "Install FRIDAY OS")
         if [[ "$INSTALL_MODE" == alongside ]]; then
           gum confirm --default=false --affirmative="Install alongside" --negative="Back" \
@@ -805,6 +952,7 @@ review() {
       "Change desktop") step_look choose ;;
       "Change what FRIDAY may do") step_features ;;
       "Change apps") step_apps ;;
+      "Change git and backup") screen 4; step_git ;;
       "Change AI") step_ai ;;
       *) leave_menu "Nothing was written to disk." ;;
     esac
@@ -818,6 +966,7 @@ step_network
 step_disk
 step_region
 step_identity
+step_git
 step_security
 step_look
 step_features
@@ -829,7 +978,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE BROWSERS DEFAULT_BROWSER EDITORS AGENTS
+export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE BROWSERS DEFAULT_BROWSER EDITORS AGENTS FILE_MANAGER TERMINAL_APP VIDEO_PLAYER IMAGE_VIEWER PDF_VIEWER MORE_APPS GIT_NAME GIT_EMAIL GITHUB_USER GITHUB_BACKUP
 # The person confirmed erasing this disk (or adding FRIDAY next to what's on
 # it) on the review screen.
 if [[ "$INSTALL_MODE" == alongside ]]; then

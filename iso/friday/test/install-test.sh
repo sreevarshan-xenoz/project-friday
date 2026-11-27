@@ -215,6 +215,9 @@ for round in 1 2; do
   else echo "  FAIL lock screen round $round: $out"; FAILS=$((FAILS + 1)); fi
 done
 
+# POST_CHECK: a command run as the user on the installed system, its output
+# kept in post-check.log (for checking what INSTALL_ENV picked).
+if [[ -n "${POST_CHECK:-}" ]]; then vm friday "$POST_CHECK" >"$OUT/post-check.log" 2>&1 || true; fi
 log "saving a screenshot and logs"
 monitor "screendump $WORK/desktop.ppm" || true
 sleep 2
