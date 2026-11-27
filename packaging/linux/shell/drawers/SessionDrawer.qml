@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import qs.common
 import qs.components
+import qs.services
 
 // Lock, sleep, log out, restart, power off. Arrow keys move, Enter picks.
 // Lock runs FRIDAY's lock screen directly (it doesn't depend on the idle
@@ -25,6 +26,8 @@ FocusScope {
   property int armed: -1
   onSelectedChanged: armed = -1
   Timer { id: disarm; interval: 3000; onTriggered: root.armed = -1 }
+  // Closing the drawer disarms too, even if it reopens before it's gone.
+  Connections { target: Shell; function onDrawerChanged() { root.armed = -1; } }
 
   implicitWidth: 240
   implicitHeight: column.implicitHeight

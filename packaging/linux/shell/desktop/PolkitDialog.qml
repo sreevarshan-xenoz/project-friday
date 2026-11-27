@@ -26,12 +26,12 @@ Scope {
   // polkit's own wording ("Authentication is needed to run `/usr/bin/x' as
   // the super user") in plain words; anything else as it comes.
   function plain(message) {
-    const m = /^Authentication is needed to run [`'"](.+?)['"] as the super user$/.exec(message.trim());
+    const m = /^Authentication is needed to run [`'"\u2018\u201c](.+?)[`'"\u2019\u201d] as the super user$/.exec((message || "").trim());
     return m ? "An app wants to run " + m[1] + " as administrator." : message;
   }
 
   function send() {
-    if (!root.flow || !root.flow.isResponseRequired || input.text === "") return;
+    if (!root.flow || !root.flow.isResponseRequired) return;
     const answer = input.text;
     input.text = "";
     root.flow.submit(answer);
@@ -172,9 +172,10 @@ Scope {
           Chip {
             text: "Allow"
             primary: true
-            // Nothing to send until a password is typed.
-            enabled: input.text !== ""
-            opacity: enabled ? 1 : 0.45
+            // Dimmed until something is typed, but still works empty: an
+            // account with no password or a "touch your key, then press
+            // Enter" prompt sends nothing.
+            opacity: input.text !== "" ? 1 : 0.5
             onClicked: root.send()
           }
         }
