@@ -86,7 +86,7 @@ PanelWindow {
       active: Shell.isOpen("launcher", bar.modelData.name)
       onClicked: Shell.toggle("launcher", bar.modelData.name)
     }
-    Workspaces { screen: bar.modelData }
+    Workspaces { id: workspaces; screen: bar.modelData }
     WindowTitle { Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
   }
 
@@ -96,7 +96,10 @@ PanelWindow {
   RowLayout {
     id: centre
     anchors.verticalCenter: strip.verticalCenter
-    x: Math.round(strip.x + strip.width / 2 - clock.implicitWidth / 2 - fridayButton.implicitWidth - spacing)
+    // ...but never over the apps button and workspaces on a narrow screen:
+    // there the clock gives way to the right instead.
+    x: Math.round(Math.max(leftGroup.x + workspaces.x + workspaces.width + 24,
+      strip.x + strip.width / 2 - clock.implicitWidth / 2 - fridayButton.implicitWidth - spacing))
     spacing: 12
 
     Rectangle {
