@@ -823,6 +823,7 @@ else
     Keystone*) SHELL_STYLE_ID=keystone ;;
     Orbit*) SHELL_STYLE_ID=orbit ;;
     Statusline*) SHELL_STYLE_ID=statusline ;;
+    Glaze*) SHELL_STYLE_ID=glaze ;;
     *)       SHELL_STYLE_ID=ember ;;
   esac
   jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" \

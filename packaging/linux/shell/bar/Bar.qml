@@ -24,6 +24,8 @@ PanelWindow {
   // Pill styles: island (three pills) and orbit (two, the middle left clear).
   readonly property bool island: Theme.style === "island" || orbit
   readonly property bool orbit: Theme.style === "orbit"
+  // Glaze: one floating glass bar along the top, with a lit rim.
+  readonly property bool glaze: Theme.style === "glaze"
 
   // Auto-hide (Look > Auto-hide bar; shell.json "barAutoHide"; off unless
   // turned on): the bar slides off its edge and windows get the space; the
@@ -90,8 +92,58 @@ PanelWindow {
     height: Theme.barHeight
     radius: Theme.floating ? height / 2 : 0
     color: bar.island || Theme.keystone || !Config.barBackground ? "transparent" : Theme.glass
-    border.width: Theme.style === "dock" && Config.barBackground ? 1 : 0
+    border.width: (Theme.style === "dock" || bar.glaze) && Config.barBackground ? 1 : 0
     border.color: Theme.glassEdge
+
+    // Glaze: a fine light along the top rim, a soft shade along the bottom
+    // one, and while FRIDAY works a band of its colours sweeps along the rim.
+    Rectangle {
+      visible: bar.glaze && Config.barBackground
+      anchors { top: parent.top; topMargin: 1; horizontalCenter: parent.horizontalCenter }
+      width: parent.width - 2 * parent.radius
+      height: 1
+      gradient: Gradient {
+        orientation: Gradient.Horizontal
+        GradientStop { position: 0; color: "transparent" }
+        GradientStop { position: 0.5; color: Theme.alpha("#ffffff", Theme.light ? 0.7 : 0.28) }
+        GradientStop { position: 1; color: "transparent" }
+      }
+    }
+    Rectangle {
+      visible: bar.glaze && Config.barBackground
+      anchors { bottom: parent.bottom; bottomMargin: 1; horizontalCenter: parent.horizontalCenter }
+      width: parent.width - 2 * parent.radius
+      height: 1
+      color: Theme.alpha("#000000", Theme.light ? 0.08 : 0.3)
+    }
+    Item {
+      id: sweepTrack
+      visible: bar.glaze && Friday.working
+      anchors { top: parent.top; left: parent.left; right: parent.right; leftMargin: parent.radius; rightMargin: parent.radius }
+      height: 2
+      clip: true
+      Rectangle {
+        id: sweep
+        width: sweepTrack.width * 0.3
+        height: 2
+        radius: 1
+        gradient: Gradient {
+          orientation: Gradient.Horizontal
+          GradientStop { position: 0; color: "transparent" }
+          GradientStop { position: 0.4; color: Theme.accent }
+          GradientStop { position: 0.7; color: Theme.signal }
+          GradientStop { position: 1; color: "transparent" }
+        }
+        // Only while it shows, and not with motion off.
+        NumberAnimation on x {
+          running: sweepTrack.visible && Theme.motion
+          from: -sweep.width; to: sweepTrack.width
+          duration: 1600
+          loops: Animation.Infinite
+          easing.type: Easing.InOutSine
+        }
+      }
+    }
   }
   // Keystone: the notch, flush with the top edge, round at the bottom, with
   // a small curve on each side where it meets the edge.

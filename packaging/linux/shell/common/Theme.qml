@@ -30,6 +30,8 @@ import Quickshell.Io
 //   rail    one slim column down the left edge; drawers open beside it
 //   orbit   two floating pills, apps and workspaces at the top left, FRIDAY
 //           and the status at the top right; the middle stays clear
+//   glaze   one floating glass bar along the top with a lit rim; a band of
+//           FRIDAY's colours sweeps along it while it works
 //   statusline  one slim solid line along the bottom, in terminal-style
 //           segments; no glass, no motion in it
 //   keystone  no bar across the screen: one notch hangs from the middle of
@@ -233,7 +235,7 @@ Singleton {
 
   // Style. `floating` styles keep the bar off the screen edge by `barInset`.
   readonly property string style: Config.style
-  readonly property bool floating: style === "island" || style === "dock" || style === "orbit"
+  readonly property bool floating: style === "island" || style === "dock" || style === "orbit" || style === "glaze"
   // The rail: a column down the left edge instead of a bar along the top.
   readonly property bool rail: style === "rail"
   readonly property int railWidth: 46
