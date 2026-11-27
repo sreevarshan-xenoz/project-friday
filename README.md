@@ -16,7 +16,7 @@ A desktop assistant for Linux and Windows, free models out of the box, your data
   <a href="https://github.com/sreevarshan-xenoz/project-friday/releases/latest"><img src="https://img.shields.io/github/v/release/sreevarshan-xenoz/project-friday?label=release&color=D42D51" alt="Latest release"></a>
   <a href="https://github.com/sreevarshan-xenoz/project-friday/actions/workflows/ci.yml"><img src="https://github.com/sreevarshan-xenoz/project-friday/actions/workflows/ci.yml/badge.svg?branch=dev" alt="CI"></a>
   <a href="#installation"><img src="https://img.shields.io/badge/Linux%20%C2%B7%20Windows-111318" alt="Linux and Windows"></a>
-  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-111318" alt="License: MIT OR Apache-2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-111318" alt="License: AGPL-3.0"></a>
 </p>
 
 A standalone desktop assistant for Windows and Linux: one Rust core, a thin host per platform, installable on an existing machine. FRIDAY OS (the Arch ISO) is the reference Linux setup, not the only way in.
@@ -392,4 +392,8 @@ More in the Commands table of [AGENTS.md](AGENTS.md), including the test VM.
 
 ## License
 
-Dual-licensed under the MIT License ([LICENSE-MIT](LICENSE-MIT)) or the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)).
+GNU Affero General Public License, version 3 ([LICENSE](LICENSE)), with one added term ([NOTICE](NOTICE)): anything that ships or serves FRIDAY or a work based on it keeps the line "Based on FRIDAY by sreevarshan-xenoz" with this repository's link in its README and its About or credits screen.
+
+In short: you may use, change and share FRIDAY, but whatever you build from it must be open source under the same license (also when you only run it as a service for others), and must credit FRIDAY. It can't go into a closed product.
+
+Releases up to v0.10.0 were licensed MIT OR Apache-2.0; copies of those keep that license.

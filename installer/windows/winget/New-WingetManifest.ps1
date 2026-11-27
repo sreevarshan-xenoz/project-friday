@@ -74,8 +74,8 @@ Publisher: Project FRIDAY
 PublisherUrl: https://github.com/sreevarshan-xenoz/project-friday
 PackageName: FRIDAY
 PackageUrl: https://github.com/sreevarshan-xenoz/project-friday
-License: MIT OR Apache-2.0
-LicenseUrl: https://github.com/sreevarshan-xenoz/project-friday/blob/dev/LICENSE-MIT
+License: AGPL-3.0-only
+LicenseUrl: https://github.com/sreevarshan-xenoz/project-friday/blob/dev/LICENSE
 ShortDescription: Press a key, ask about what's on screen or selected, get an answer.
 Description: |-
   FRIDAY is a desktop assistant. Press Win+Y to ask anything, Win+Alt+Y to ask about the

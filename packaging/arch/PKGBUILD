@@ -27,7 +27,7 @@ pkgrel=1
 pkgdesc="FRIDAY: press a key, ask about what's on screen or selected, get an answer"
 arch=('x86_64')
 url="https://github.com/sreevarshan-xenoz/project-friday"
-license=('MIT OR Apache-2.0')
+license=('AGPL-3.0-only')
 depends=('gcc-libs' 'glibc' 'openssl' 'bash' 'curl' 'jq' 'fuzzel' 'libnotify' 'wl-clipboard' 'hicolor-icon-theme')
 makedepends=('cargo' 'git')
 optdepends=(
@@ -154,7 +154,7 @@ package() {
   install -Dm644 "$lin/whats-new" -t "$pkgdir/usr/share/friday"
   install -Dm644 packaging/arch/friday-signing-key.asc packaging/arch/friday-signing-key.fpr \
     -t "$pkgdir/usr/share/friday"
-  install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 LICENSE NOTICE -t "$pkgdir/usr/share/licenses/$pkgname"
 
   # agent-desktop, beside its clipboard helper (the X11 clipboard owner it
   # looks for next to itself). Not on PATH: FRIDAY finds it here.

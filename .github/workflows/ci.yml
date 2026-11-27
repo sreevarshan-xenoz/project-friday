@@ -170,7 +170,7 @@ jobs:
         run: |
           $dir = "$env:LOCALAPPDATA\Programs\FRIDAY"
           # vcruntime140*: a clean Windows has no Visual C++ runtime (this runner does, so only the files prove it).
-          foreach ($f in 'friday-tray.exe', 'friday-daemon.exe', 'friday-ctl.exe', 'friday-windows-host.exe', 'agent-desktop.exe', 'agent-desktop-LICENSE', 'LICENSE-MIT', 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') {
+          foreach ($f in 'friday-tray.exe', 'friday-daemon.exe', 'friday-ctl.exe', 'friday-windows-host.exe', 'agent-desktop.exe', 'agent-desktop-LICENSE', 'LICENSE', 'NOTICE', 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') {
             if (-not (Test-Path "$dir\$f")) { throw "missing $dir\$f" }
           }
           $run = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run').FRIDAY

@@ -1,0 +1,18 @@
+# Credits
+
+FRIDAY builds on other people's open-source work. Code ported into FRIDAY
+keeps its upstream copyright header, and each port is listed here: the
+project, its license, the files taken and the upstream commit.
+
+## Ported into FRIDAY
+
+None yet.
+
+## Shipped alongside FRIDAY (unchanged, under their own licenses)
+
+| Project | License | Where |
+|---|---|---|
+| [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | FRIDAY OS installer option, `iso/friday/airootfs/usr/share/friday/dots-hyprland` |
+| [Omarchy](https://github.com/basecamp/omarchy) | MIT | FRIDAY OS's Hyprland base, pinned in `iso/friday/fetch-omarchy.sh` |
+| [agent-desktop](https://github.com/vercel-labs/agent-desktop) | Apache-2.0 | `friday-git` and the MSI (`agent-desktop-LICENSE` beside it) |
+| [tiny-voca](https://github.com/n4ze3m/tiny-voca), [dizione](https://github.com/n4ze3m/dizione) | Apache-2.0 | voice (`services/mobile/src/tinyvoca`, see its NOTICE) |
