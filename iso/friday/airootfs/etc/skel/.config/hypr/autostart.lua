@@ -10,5 +10,9 @@ o.exec_on_start("friday shell")
 o.exec_on_start("friday wallpaper show")
 o.exec_on_start("friday idle")
 
+-- A password or key left on the clipboard is cleared after 2 minutes
+-- (friday clipguard; switch: friday feature clipboard-expiry off).
+o.exec_on_start("friday clipguard")
+
 -- FRIDAY: one-time first-login greeting (offers AI setup if no key yet).
 o.exec_on_start("friday welcome")

@@ -54,6 +54,7 @@ Autonomous Agent & Cognitive Loop:
   friday recall [status|on|off|keep 3h|24h|7d]  Keep the text of windows you look at, here
                                    only, so you can ask "what was that…" (off forgets it)
   friday clips [status|on|off|pick] Keep the last 200 texts you copy; Super+Ctrl+V pastes one
+  friday clipguard [watch]         Clear a password or key left on the clipboard after 2 minutes
   friday snippet add|rm|list       Text you paste often, by name (;name in Super+Ctrl+V)
   friday routine save|run|list|rm  Save what FRIDAY just did on your desktop, then do it again
                                    by name ("run <name>" in the ask box works too)
@@ -3879,6 +3880,42 @@ EOF2
   esac
 }
 
+# `friday clipguard [watch|check]` (CTX-14, switch clipboard-expiry): a
+# password or key left on the clipboard is cleared after 2 minutes, clips on
+# or off. `watch` (FRIDAY OS starts it at login) runs `check` on each
+# clipboard change. A copy a password manager marks as sensitive, or one
+# shaped like a password or token, starts a timer that keeps only its hash,
+# in memory; if the clipboard still holds the same text 2 minutes later, it
+# is cleared. Anything copied since is left alone.
+friday_clipguard() {
+  local text sum
+  case "${1:-watch}" in
+    watch)
+      command -v wl-paste >/dev/null 2>&1 || { echo "friday: clipguard needs wl-clipboard" >&2; return 1; }
+      exec wl-paste --type text --watch "$0" clipguard check ;;
+    check)
+      text=$(head -c 20000)
+      friday_feature_on clipboard-expiry || return 0
+      [ -n "${text//[[:space:]]/}" ] || return 0
+      if [ "${CLIPBOARD_STATE:-}" != sensitive ] && ! friday_secret_shaped "$text" \
+        && ! timeout 2 wl-paste --list-types 2>/dev/null | grep -qi 'passwordmanagerhint'; then
+        return 0
+      fi
+      sum=$(printf '%s' "$text" | sha256sum | cut -d' ' -f1)
+      text=""
+      (
+        sleep "${FRIDAY_CLIPGUARD_SECONDS:-120}"
+        # Read and hashed the same way as above, so the sums compare.
+        now=$(timeout 2 wl-paste --no-newline --type text 2>/dev/null || true)
+        if [ -n "$now" ] && [ "$(printf '%s' "$now" | sha256sum | cut -d' ' -f1)" = "$sum" ]; then
+          wl-copy --clear 2>/dev/null || true
+        fi
+      ) </dev/null >/dev/null 2>&1 &
+      disown 2>/dev/null || true ;;
+    *) echo "Usage: friday clipguard [watch|check]" >&2; return 1 ;;
+  esac
+}
+
 # How many seconds ago the clipboard text <text> was copied, from the clips
 # log; nothing (status 1) when clips are off or don't have it as the newest.
 friday_clip_age() {
@@ -5018,7 +5055,8 @@ usage-page|friday usage: calls, failures, free-limit hits and speed per AI provi
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
 call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone
-action-check|Before a risky action, say what will change; after it, check and say done, partly or failed"
+action-check|Before a risky action, say what will change; after it, check and say done, partly or failed
+clipboard-expiry|A password or key left on the clipboard is cleared after 2 minutes, with clips on or off"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
@@ -7069,6 +7107,10 @@ $offer"
   clips)
     shift
     friday_clips "$@"
+    ;;
+  clipguard)
+    shift
+    friday_clipguard "$@"
     ;;
   snippet)
     shift
