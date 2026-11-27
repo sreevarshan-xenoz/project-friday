@@ -19,7 +19,9 @@ PanelWindow {
   required property ShellScreen modelData
   screen: modelData
 
-  readonly property bool shown: edge.hovered || body.hovered
+  // Up while the pointer is on the edge, or anywhere from the dock down to
+  // the edge (no gap to cross on the way up).
+  readonly property bool shown: edge.hovered || zoneHover.hovered
   // The app under the pointer, named above the dock.
   property string hoverName: ""
   property real reveal: shown ? 1 : 0
@@ -46,7 +48,8 @@ PanelWindow {
   }
 
   anchors { bottom: true; left: true; right: true }
-  implicitHeight: 76
+  // The dock, the gap under it and room above it for the app's name.
+  implicitHeight: 104
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
   WlrLayershell.namespace: "friday-dock"
@@ -54,7 +57,7 @@ PanelWindow {
   // Only the edge strip, and the dock while it's up, take the pointer.
   mask: Region {
     item: edgeStrip
-    Region { item: dock.reveal > 0.01 ? body : null }
+    Region { item: dock.reveal > 0.01 ? zone : null }
   }
 
   Item {
@@ -66,92 +69,99 @@ PanelWindow {
   }
 
   Label {
-    visible: dock.reveal > 0.5 && body.hovered && dock.hoverName !== ""
-    anchors { horizontalCenter: body.horizontalCenter; bottom: body.top; bottomMargin: 6 }
+    visible: dock.reveal > 0.5 && zoneHover.hovered && dock.hoverName !== ""
+    anchors { horizontalCenter: zone.horizontalCenter; bottom: zone.top; bottomMargin: 6 }
     text: dock.hoverName
     font.pixelSize: Theme.fontS + 1
     color: Theme.text
   }
 
-  Rectangle {
-    id: body
-    readonly property alias hovered: bodyHover.hovered
+  // The dock and the gap under it down to the edge: hovering any of it keeps
+  // the dock up. Off the bottom when hidden; 10 px above the edge when up.
+  Item {
+    id: zone
     anchors.horizontalCenter: parent.horizontalCenter
-    y: parent.height - 8 - (height + 8) * dock.reveal + (1 - dock.reveal) * 8
-    width: row.implicitWidth + 20
-    height: 58
-    radius: Math.min(18, Theme.radius)
-    color: Theme.glass
-    border.width: 1
-    border.color: Theme.glassEdge
-    opacity: dock.reveal
-    visible: dock.reveal > 0.01
-    HoverHandler { id: bodyHover }
+    y: parent.height - (body.height + 10) * dock.reveal
+    width: body.width
+    height: parent.height - y
+    HoverHandler { id: zoneHover }
 
-    RowLayout {
-      id: row
-      anchors.centerIn: parent
-      spacing: 6
-      Repeater {
-        model: dock.items
-        Item {
-          id: slot
-          required property var modelData
-          readonly property var wins: dock.windowsOf(modelData)
-          readonly property bool front: wins.some(w => w.activated)
-          implicitWidth: 44
-          implicitHeight: 48
+    Rectangle {
+      id: body
+      width: row.implicitWidth + 20
+      height: 58
+      radius: Math.min(18, Theme.radius)
+      color: Theme.glass
+      border.width: 1
+      border.color: Theme.glassEdge
+      opacity: dock.reveal
+      visible: dock.reveal > 0.01
 
-          Rectangle {
-            anchors.centerIn: icon
-            width: 42; height: 42
-            radius: 12
-            color: tap.hovered ? Theme.raised : "transparent"
-          }
-          Image {
-            id: icon
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 2 - (tap.hovered && Theme.motion ? 3 : 0)
-            Behavior on y { NumberAnimation { duration: Theme.fast; easing.type: Theme.easing } }
-            width: 34; height: 34
-            sourceSize: Qt.size(64, 64)
-            source: AppIcons.source(slot.modelData.entry ? slot.modelData.entry.icon : slot.modelData.appId)
-            asynchronous: true
-          }
-          Glyph {
-            visible: icon.status !== Image.Ready
-            anchors.centerIn: icon
-            text: Icons.apps
-            size: 22
-            color: Theme.faint
-          }
-          // Running: a dot; in front: a longer one in the accent.
-          Rectangle {
-            visible: slot.wins.length > 0
-            anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom }
-            width: slot.front ? 14 : 5
-            height: 4
-            radius: 2
-            color: slot.front ? Theme.accent : Theme.subtext
-            Behavior on width { NumberAnimation { duration: Theme.fast } }
-          }
-          HoverHandler { id: tap }
-          TapHandler {
-            onTapped: {
-              if (slot.wins.length > 0) {
-                // In front already: the next of its windows; otherwise its first.
-                const i = slot.wins.findIndex(w => w.activated);
-                slot.wins[(i + 1) % slot.wins.length].activate();
-              } else if (slot.modelData.entry) {
-                slot.modelData.entry.execute();
+      RowLayout {
+        id: row
+        anchors.centerIn: parent
+        spacing: 6
+        Repeater {
+          model: dock.items
+          Item {
+            id: slot
+            required property var modelData
+            readonly property var wins: dock.windowsOf(modelData)
+            readonly property bool front: wins.some(w => w.activated)
+            implicitWidth: 44
+            implicitHeight: 48
+
+            Rectangle {
+              anchors.centerIn: icon
+              width: 42; height: 42
+              radius: 12
+              color: tap.hovered ? Theme.raised : "transparent"
+            }
+            Image {
+              id: icon
+              anchors.horizontalCenter: parent.horizontalCenter
+              y: 2 - (tap.hovered && Theme.motion ? 3 : 0)
+              Behavior on y { NumberAnimation { duration: Theme.fast; easing.type: Theme.easing } }
+              width: 34; height: 34
+              sourceSize: Qt.size(64, 64)
+              source: AppIcons.source(slot.modelData.entry ? slot.modelData.entry.icon : slot.modelData.appId)
+              asynchronous: true
+            }
+            Glyph {
+              visible: icon.status !== Image.Ready
+              anchors.centerIn: icon
+              text: Icons.apps
+              size: 22
+              color: Theme.faint
+            }
+            // Running: a dot; in front: a longer one in the accent.
+            Rectangle {
+              visible: slot.wins.length > 0
+              anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom }
+              width: slot.front ? 14 : 5
+              height: 4
+              radius: 2
+              color: slot.front ? Theme.accent : Theme.subtext
+              Behavior on width { NumberAnimation { duration: Theme.fast } }
+            }
+            HoverHandler { id: tap }
+            TapHandler {
+              onTapped: {
+                if (slot.wins.length > 0) {
+                  // In front already: the next of its windows; otherwise its first.
+                  const i = slot.wins.findIndex(w => w.activated);
+                  slot.wins[(i + 1) % slot.wins.length].activate();
+                } else if (slot.modelData.entry) {
+                  slot.modelData.entry.execute();
+                }
               }
             }
-          }
-          Binding {
-            when: tap.hovered
-            target: dock
-            property: "hoverName"
-            value: slot.modelData.entry ? slot.modelData.entry.name : slot.modelData.id
+            Binding {
+              when: tap.hovered
+              target: dock
+              property: "hoverName"
+              value: slot.modelData.entry ? slot.modelData.entry.name : slot.modelData.id
+            }
           }
         }
       }
