@@ -3006,6 +3006,10 @@ if [[ "$(jq -r '.dock' "$conf")" == true && "$(jq -r '.style' "$conf")" == islan
 else fail "shell.json after dock on: $(cat "$conf" 2>/dev/null)"; fi
 "${sh_env[@]}" bash "$F" shell dock off >/dev/null
 contains "dock off" "$("${sh_env[@]}" bash "$F" shell dock)" "Dock: off"
+contains "the shelf is off unless turned on" "$("${sh_env[@]}" bash "$F" shell shelf)" "Shelf: off"
+"${sh_env[@]}" bash "$F" shell shelf on >/dev/null
+[[ "$(jq -r '.shelf' "$conf")" == true ]] && pass "shelf on is saved" || fail "shell.json after shelf on: $(cat "$conf")"
+"${sh_env[@]}" bash "$F" shell shelf off >/dev/null
 echo '{ "palette": "friday", "clock24h": false }' >"$conf"
 "${sh_env[@]}" bash "$F" shell style dock >/dev/null
 contains "other settings are kept" "$(cat "$conf")" '"clock24h": false'

@@ -167,6 +167,7 @@ Desktop & System Substrate:
   friday shell wallpaper           Pick a wallpaper (Super+Ctrl+T)
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
   friday shell dock [on|off]       A dock of pinned and running apps along the bottom (up at the edge)
+  friday shell shelf [on|off]      A shelf on the right edge: drop files or text to keep, recent copies
   friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
   friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
@@ -7745,6 +7746,19 @@ $offer"
           *) echo "Usage: friday shell dock [on|off|status]" >&2; exit 2 ;;
         esac
         exit 0 ;;
+      shelf)
+        # The shelf on the right edge (shell.json "shelf"); off unless turned on.
+        conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
+        case "${2:-status}" in
+          on|off)
+            mkdir -p "$(dirname "$conf")"; tmp=$(mktemp "$conf.XXXXXX")
+            v=false; [ "$2" = on ] && v=true
+            jq --argjson v "$v" '.shelf = $v' "$conf" >"$tmp" 2>/dev/null || jq -n --argjson v "$v" '{shelf: $v}' >"$tmp"
+            mv -f "$tmp" "$conf"; echo "Shelf: $2." ;;
+          status) if [ "$(jq -r '.shelf // false' "$conf" 2>/dev/null)" = true ]; then echo "Shelf: on"; else echo "Shelf: off (friday shell shelf on)"; fi ;;
+          *) echo "Usage: friday shell shelf [on|off|status]" >&2; exit 2 ;;
+        esac
+        exit 0 ;;
       style|palette)
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
@@ -7780,7 +7794,7 @@ $offer"
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
       overview) exec quickshell -p "$dir" ipc call overview toggle ;;
       wallpaper) exec quickshell -p "$dir" ipc call wallpaper toggle ;;
-      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|dock [on|off]|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|dock [on|off]|shelf [on|off]|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
     esac
     ;;
   daemon)

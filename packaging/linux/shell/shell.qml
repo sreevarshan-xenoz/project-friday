@@ -36,6 +36,7 @@ ShellRoot {
       LazyLoader { active: !Theme.rail; Bar { modelData: perScreen.modelData } }
       LazyLoader { active: Theme.rail; RailBar { modelData: perScreen.modelData } }
       LazyLoader { active: Config.dock; Dock { modelData: perScreen.modelData } }
+      LazyLoader { active: Config.shelf; Shelf { modelData: perScreen.modelData } }
       DrawerHost { modelData: perScreen.modelData }
       Popups { modelData: perScreen.modelData }
       AnswerPill { modelData: perScreen.modelData }

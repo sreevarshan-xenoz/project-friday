@@ -57,6 +57,8 @@ Singleton {
   readonly property bool workspaceIcons: pick("workspaceIcons", false) === true
   // The dock along the bottom (off unless turned on).
   readonly property bool dock: pick("dock", false) === true
+  // The shelf on the right edge (off unless turned on).
+  readonly property bool shelf: pick("shelf", false) === true
 
   function pick(key, fallback) {
     const v = root.settings[key];

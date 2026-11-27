@@ -16,6 +16,7 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | CPU and memory readouts in the bar, warning lines at 90% and 95% (`bar/ResourcesChip.qml`, switch `bar-resources`) |
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | app icons in the workspaces (`bar/Workspaces.qml`, Look > Workspace icons) |
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | the dock: pinned and running apps, up when the pointer reaches the bottom edge (`desktop/Dock.qml`) |
+| [Deepender25/Edge-Drop](https://github.com/Deepender25/Edge-Drop) | Apache-2.0 | the shelf on the screen edge: drop files or text to keep them (`desktop/Shelf.qml`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 
