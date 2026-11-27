@@ -17,7 +17,9 @@ Scope {
   property string from: ""
 
   onCurrentChanged: {
-    if (last !== "" && current !== "" && current !== last
+    // A change during a fade lets that one finish (the newest picture is
+    // under it), rather than restarting it from full.
+    if (last !== "" && current !== "" && current !== last && !fade.active
         && Config.featureOn("wallpaper-fade") && Theme.motion) {
       from = last;
       fade.active = true;
