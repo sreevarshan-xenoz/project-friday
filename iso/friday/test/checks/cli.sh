@@ -509,6 +509,10 @@ contains "an upgrade that works is kept" "$out" '"outcome": "upgraded"'
 contains "a new kernel asks for a restart" "$out" '"restart_for_kernel": true'
 contains "the new versions are installed" "$(cat "$U/installed")" "friday-git 1.1"
 backup_list=$(tar -tf "$(ls -1t "$U"/state/settings-*.tar | head -n1)")
+# GitHub backup: off until set up, and says how to turn it on.
+gh_out=$(bash "$F" backup github status 2>&1)
+contains "GitHub backup says it's off and how to set it up" "$gh_out" "friday backup github setup"
+gh_out=$(bash "$F" backup github now 2>&1) && fail "a GitHub backup ran without setup" || pass "a GitHub backup needs setup first"
 contains "the person's FRIDAY settings were backed up first" "$backup_list" "alice/.config/friday/friday.env"
 contains "and what FRIDAY remembers" "$backup_list" "alice/.local/state/friday/memory/episodes.jsonl"
 [[ "$backup_list" != *link* && "$backup_list" != *huge* ]] && pass "a symlink or a huge file in there isn't copied as root" || fail "the backup took a symlink or a huge file: $backup_list"
