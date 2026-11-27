@@ -197,6 +197,7 @@ public static class AppSettings
         ("memory-tidy", "When memory is fuller than an ask carries, offer a shorter list to approve"),
         ("activity", "One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately"),
         ("model-per-job", "A model picked for asks, screen questions or chores (AI page) is tried first"),
+        ("battery-model", "On battery, a local model you picked gives way to a smaller one of its family you already have"),
         ("status-orb", "The answer card's orb shows listening, thinking and speaking"),
         ("screen-ocr", "A window with no text of its own is asked about with its words read off the screen here, not its picture"),
         ("usage-page", "Settings shows calls, failures, free-limit hits and speed per AI provider"),

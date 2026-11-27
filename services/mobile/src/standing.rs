@@ -568,7 +568,8 @@ pub fn read_battery() -> Option<Battery> {
         let status = std::fs::read_to_string(p.join("status")).unwrap_or_default();
         return Some(Battery {
             percent,
-            charging: matches!(status.trim(), "Charging" | "Full"),
+            // "Not charging": plugged in, held below full to spare the battery.
+            charging: matches!(status.trim(), "Charging" | "Full" | "Not charging"),
         });
     }
     None
