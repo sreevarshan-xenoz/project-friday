@@ -128,6 +128,7 @@ PanelWindow {
     Repeater {
       model: Theme.sharp ? [0, 1] : []
       Item {
+        id: bracket
         required property int modelData
         readonly property bool far: modelData === 1
         x: far ? drawer.width - 14 : 0
@@ -135,8 +136,8 @@ PanelWindow {
         width: 14
         height: 14
         opacity: host.reveal
-        Rectangle { width: 14; height: 1; color: Theme.accent; y: parent.far ? 13 : 0 }
-        Rectangle { width: 1; height: 14; color: Theme.accent; x: parent.far ? 13 : 0 }
+        Rectangle { width: 14; height: 1; color: Theme.accent; y: bracket.far ? 13 : 0 }
+        Rectangle { width: 1; height: 14; color: Theme.accent; x: bracket.far ? 13 : 0 }
       }
     }
 
