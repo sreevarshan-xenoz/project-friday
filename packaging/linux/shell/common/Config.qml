@@ -61,6 +61,10 @@ Singleton {
   readonly property bool shelf: pick("shelf", false) === true
   // The bar slides away until the pointer reaches its edge (off unless on).
   readonly property bool barAutoHide: pick("barAutoHide", false) === true
+  // The concave corners where a flush bar meets the screen (off: plain).
+  readonly property bool barCorners: pick("barCorners", true) !== false
+  // The bar's own background (off: its groups sit on the wallpaper).
+  readonly property bool barBackground: pick("barBackground", true) !== false
 
   function pick(key, fallback) {
     const v = root.settings[key];

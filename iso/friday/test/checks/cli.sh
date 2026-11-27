@@ -3017,6 +3017,13 @@ if [[ "$(jq -r '.barAutoHide' "$conf")" == true && "$(jq -r '.style' "$conf")" =
 else fail "shell.json after autohide on: $(cat "$conf" 2>/dev/null)"; fi
 "${sh_env[@]}" bash "$F" shell autohide off >/dev/null
 contains "autohide off" "$("${sh_env[@]}" bash "$F" shell autohide)" "Auto-hide bar: off"
+contains "the bar's corners are on unless turned off" "$("${sh_env[@]}" bash "$F" shell corners)" "Bar corners: on"
+"${sh_env[@]}" bash "$F" shell corners off >/dev/null
+"${sh_env[@]}" bash "$F" shell background off >/dev/null
+if [[ "$(jq -c '[.barCorners, .barBackground, .style]' "$conf")" == '[false,false,"island"]' ]]; then pass "corners off and background off are saved beside the other settings"
+else fail "shell.json after corners/background off: $(cat "$conf" 2>/dev/null)"; fi
+contains "background status" "$("${sh_env[@]}" bash "$F" shell background)" "Bar background: off (friday shell background on)"
+"${sh_env[@]}" bash "$F" shell corners on >/dev/null; "${sh_env[@]}" bash "$F" shell background on >/dev/null
 echo '{ "palette": "friday", "clock24h": false }' >"$conf"
 "${sh_env[@]}" bash "$F" shell style dock >/dev/null
 contains "other settings are kept" "$(cat "$conf")" '"clock24h": false'

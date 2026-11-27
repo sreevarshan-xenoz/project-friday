@@ -172,18 +172,23 @@ FocusScope {
           }
         }
       }
-      Label { Layout.topMargin: 4; text: "Auto-hide bar"; font.pixelSize: Theme.fontS; color: Theme.faint }
+      // The bar's switches: lit when on, a click flips one.
+      Label { Layout.topMargin: 4; text: "Bar"; font.pixelSize: Theme.fontS; color: Theme.faint }
       Flow {
         Layout.fillWidth: true
         spacing: 6
         Repeater {
-          model: [false, true]
+          model: [
+            { key: "barAutoHide", text: "Auto-hide", on: Config.barAutoHide },
+            { key: "barCorners", text: "Corners", on: Config.barCorners },
+            { key: "barBackground", text: "Background", on: Config.barBackground }
+          ]
           Chip {
-            required property bool modelData
-            text: modelData ? "On" : "Off"
-            primary: Config.barAutoHide === modelData
+            required property var modelData
+            text: modelData.text
+            primary: modelData.on
             implicitHeight: 28
-            onClicked: Config.set("barAutoHide", modelData)
+            onClicked: Config.set(modelData.key, !modelData.on)
           }
         }
       }
