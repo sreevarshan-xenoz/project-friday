@@ -28,6 +28,7 @@ ShellRoot {
     Scope {
       id: perScreen
       required property ShellScreen modelData
+      DesktopWidgets { modelData: perScreen.modelData }
       Bar { modelData: perScreen.modelData }
       DrawerHost { modelData: perScreen.modelData }
       Popups { modelData: perScreen.modelData }
