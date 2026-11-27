@@ -402,10 +402,7 @@ async fn routine(args: &[String]) -> std::process::ExitCode {
     };
     // `friday routine record`: Hyprland's events while you work, kept in the
     // runtime folder until `finish <name>` turns them into a routine.
-    let recording = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("friday-recording.txt");
+    let recording = friday_mobile::runtime_dir().join("friday-recording.txt");
     match args.first().map(String::as_str) {
         #[cfg(unix)]
         Some("record") => {

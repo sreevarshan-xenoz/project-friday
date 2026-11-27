@@ -73,10 +73,11 @@ pub mod web_search;
 pub mod win_insert;
 pub mod workspace;
 
-/// Where FRIDAY keeps its small runtime files (pid files): `$XDG_RUNTIME_DIR`,
-/// which is this user's own; without one, a `friday-<uid>` folder in the
-/// temp folder, made private, so another user on the computer can't plant a
-/// pid file there that FRIDAY would then stop. (Windows' temp folder is
+/// Where FRIDAY keeps its small runtime files (pid files, recordings):
+/// `$XDG_RUNTIME_DIR`, which is this user's own; without one, `run` in
+/// FRIDAY's state folder (`~/.local/state/friday/run`), never a shared
+/// `/tmp` where another user could plant a pid file FRIDAY would then stop.
+/// The CLI's `friday_run` picks the same folder. (Windows' temp folder is
 /// already per user.)
 pub fn runtime_dir() -> std::path::PathBuf {
     if let Some(d) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
@@ -84,19 +85,20 @@ pub fn runtime_dir() -> std::path::PathBuf {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-        // SAFETY: getuid has no preconditions and can't fail.
-        let uid = unsafe { libc::getuid() };
-        let d = std::env::temp_dir().join(format!("friday-{uid}"));
-        let _ = std::fs::DirBuilder::new().mode(0o700).create(&d);
-        match std::fs::symlink_metadata(&d) {
-            Ok(m) if m.is_dir() && m.uid() == uid => {
-                let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
-                d
-            }
-            // Someone else's, or not a folder: nowhere shared.
-            _ => std::env::temp_dir().join(format!("friday-{uid}-{}", std::process::id())),
-        }
+        use std::os::unix::fs::DirBuilderExt;
+        let state = std::env::var_os("XDG_STATE_HOME")
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
+            })
+            .unwrap_or_else(std::env::temp_dir);
+        let d = state.join("friday").join("run");
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&d);
+        d
     }
     #[cfg(not(unix))]
     std::env::temp_dir()

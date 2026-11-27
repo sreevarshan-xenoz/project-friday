@@ -274,14 +274,13 @@ shell_window_look() {
 }
 
 # Where FRIDAY keeps its small runtime files (pid files, the terminal
-# watch): $XDG_RUNTIME_DIR, this user's own; without one, a private
-# /tmp/friday-<uid>, so another user can't plant a file FRIDAY then trusts.
-# (The daemon uses the same folder: friday_mobile::runtime_dir.)
+# watch): $XDG_RUNTIME_DIR, this user's own; without one, run/ in FRIDAY's
+# state folder, never a shared /tmp where another user could plant a file
+# FRIDAY then trusts. The daemon picks the same (friday_mobile::runtime_dir).
 friday_run() {
   if [ -n "${XDG_RUNTIME_DIR:-}" ]; then echo "$XDG_RUNTIME_DIR"; return 0; fi
-  local d; d="${TMPDIR:-/tmp}/friday-$(id -u)"
-  mkdir -p -m 700 "$d" 2>/dev/null || true
-  if [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ]; then chmod 700 "$d"; else d="${TMPDIR:-/tmp}/friday-$(id -u)-$$"; mkdir -p -m 700 "$d"; fi
+  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday/run"
+  mkdir -p "$d" 2>/dev/null && chmod 700 "$d" 2>/dev/null || true
   echo "$d"
 }
 
@@ -3598,7 +3597,7 @@ friday_shell_hook() {
   case "${1:-zsh}" in
     zsh) cat <<'EOF'
 zmodload zsh/datetime 2>/dev/null
-typeset -g _friday_tf="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/friday-$UID}/friday-term/$$" _friday_cmd="" _friday_dir=""
+typeset -g _friday_tf="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/friday/run}/friday-term/$$" _friday_cmd="" _friday_dir=""
 _friday_term() { mkdir -p -m 700 "${_friday_tf:h}" 2>/dev/null; print -r -- "$1"$'\t'"${EPOCHSECONDS:-0}"$'\t'"$2"$'\t'"$_friday_dir"$'\t'"$_friday_cmd" >| "$_friday_tf" 2>/dev/null; }
 _friday_preexec() { _friday_cmd=${1//[$'\t\n']/ } _friday_dir=$PWD; _friday_term running -; }
 _friday_precmd() { local s=$?; [[ -n $_friday_cmd ]] && _friday_term done $s; _friday_cmd=""; return 0; }
@@ -3615,7 +3614,7 @@ EOF
 # The DEBUG trap records the first command after a prompt that isn't one of
 # PROMPT_COMMAND's own (starship and the like). With bash-preexec, its hooks
 # are used instead.
-_friday_tf="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}/friday-$UID}/friday-term/$$" _friday_cmd="" _friday_dir="" _friday_ready=""
+_friday_tf="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/friday/run}/friday-term/$$" _friday_cmd="" _friday_dir="" _friday_ready=""
 _friday_term() { mkdir -p -m 700 "${_friday_tf%/*}" 2>/dev/null; printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(date +%s)" "$2" "$_friday_dir" "$_friday_cmd" >| "$_friday_tf" 2>/dev/null; }
 _friday_start() { local n c; read -r n c <<<"$(HISTTIMEFORMAT= history 1)"; _friday_cmd=${1:-$c}; _friday_cmd=${_friday_cmd//[$'\t\n']/ } _friday_dir=$PWD; _friday_term running -; }
 _friday_debug() { [[ -n $_friday_ready ]] || return 0; local p="${PROMPT_COMMAND[*]}" b="$BASH_COMMAND"; [[ ${p//[[:space:]]/} != *"${b//[[:space:]]/}"* ]] || return 0; _friday_ready=""; _friday_start; }
