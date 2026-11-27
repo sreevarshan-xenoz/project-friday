@@ -90,6 +90,12 @@ for pal in core ember polar frost moss dawn walnut rose nocturne mauve contrast;
   if [[ -n "$acc" && "$line" == *"accent=$acc outline=$out"* ]]; then pass "$pal: window borders match the shell ($acc / $out)"
   else fail "$pal: friday's hypr-look colours ($line) differ from Theme.qml ($acc / $out)"; fi
 done
+# Look's presets and friday shell preset list the same pairs.
+qml_presets=$(grep -oE '\{ name: "[a-z]+", style: "[a-z]+", palette: "[a-z]+" \}' "$REPO_ROOT/packaging/linux/shell/common/Config.qml" \
+  | sed -E 's/.*name: "([a-z]+)", style: "([a-z]+)", palette: "([a-z]+)".*/\1:\2:\3/' | tr '\n' ' ' | sed 's/ $//')
+cli_presets=$(sed -n 's/^ *presets="\(.*\)"$/\1/p' "$F_CLI")
+if [[ -n "$qml_presets" && "$qml_presets" == "$cli_presets" ]]; then pass "presets match in Look and the CLI ($qml_presets)"
+else fail "presets differ: Config.qml [$qml_presets], friday [$cli_presets]"; fi
 grep -q 'dofile(friday_look)' "$AIROOTFS/etc/skel/.config/hypr/hyprland.lua" \
   && pass "FRIDAY OS's hyprland.lua loads FRIDAY Shell's window look" \
   || fail "FRIDAY OS's hyprland.lua does not load ~/.config/friday/hypr-look.lua"
