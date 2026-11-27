@@ -69,14 +69,15 @@ PanelWindow {
   readonly property real monW: Math.max(1, monitor ? monitor.width / (monitor.scale || 1) : width)
   readonly property real monH: Math.max(1, monitor ? monitor.height / (monitor.scale || 1) : height)
 
-  Shortcut { sequence: "Escape"; enabled: ov.open; onActivated: ov.open = false }
+  Shortcut { sequences: ["Escape", "Meta+Tab"]; enabled: ov.open; onActivated: ov.open = false }
   Shortcut { sequence: "Left"; enabled: ov.open; onActivated: ov.picked = Math.max(1, ov.picked - 1) }
   Shortcut { sequence: "Right"; enabled: ov.open; onActivated: ov.picked = Math.min(ov.slots, ov.picked + 1) }
   Shortcut { sequence: "Return"; enabled: ov.open; onActivated: ov.go(ov.picked) }
 
   IpcHandler {
     target: "overview"
-    function toggle(): void { if (Shell.focusedScreen() === ov.modelData.name) ov.toggle(); }
+    // Closes it wherever it is open, opens it on the focused screen.
+    function toggle(): void { if (ov.open) ov.open = false; else if (Shell.focusedScreen() === ov.modelData.name) ov.toggle(); }
     function close(): void { ov.open = false; }
     function isOpen(): string { return ov.open ? "true" : "false"; }
   }
@@ -102,7 +103,7 @@ PanelWindow {
     opacity: dim.opacity
 
     Repeater {
-      model: ov.open ? ov.slots : 0
+      model: ov.open || dim.opacity > 0 ? ov.slots : 0
 
       Rectangle {
         id: card
@@ -171,13 +172,13 @@ PanelWindow {
             anchors.fill: parent
             Repeater {
               id: windows
-              model: Hyprland.toplevels.values.filter(t => t.workspace && t.workspace.id === card.wsId && t.lastIpcObject && t.lastIpcObject.at)
+              model: Hyprland.toplevels.values.filter(t => t.workspace && t.workspace.id === card.wsId && (!ov.monitor || !t.workspace.monitor || t.workspace.monitor === ov.monitor) && t.lastIpcObject && t.lastIpcObject.at)
   
               Item {
                 id: win
                 required property var modelData
                 readonly property string address: modelData.address
-                readonly property var ipc: modelData.lastIpcObject
+                readonly property var ipc: modelData.lastIpcObject || ({ at: [0, 0], size: [0, 0] })
                 x: (ipc.at[0] - ov.monX) * card.k
                 y: (ipc.at[1] - ov.monY) * card.k
                 width: Math.max(12, ipc.size[0] * card.k)
