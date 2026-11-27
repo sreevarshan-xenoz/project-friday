@@ -142,6 +142,7 @@ PanelWindow {
     }
     spacing: 12
 
+    ResourcesChip {}
     Tray {}
     MediaChip {}
     StatusCluster {

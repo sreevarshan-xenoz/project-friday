@@ -12,6 +12,7 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 |---|---|---|
 | [caelestia-dots/shell](https://github.com/caelestia-dots/shell), [snowarch/iNiR](https://github.com/snowarch/iNiR), [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | the rail bar style: a slim column down the left edge, drawers beside it (`bar/RailBar.qml`) |
 | [Gakuseei/Ricelin](https://github.com/Gakuseei/Ricelin) | MIT | the keystone bar style: everything in one notch at the top's middle (`bar/Bar.qml`) |
+| [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | CPU and memory readouts in the bar, warning lines at 90% and 95% (`bar/ResourcesChip.qml`, switch `bar-resources`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 
