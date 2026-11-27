@@ -11,50 +11,68 @@ Exit 0: nothing new. 10: pins moved (open a pull request). 3: a new series
 needs a person. 1: a check failed (treat as a possible supply-chain problem).
 A summary goes to $SUMMARY_FILE as Markdown.
 """
-import hashlib, json, os, subprocess, sys, tarfile, tempfile, urllib.request
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+from typing import Any
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 MANIFEST = os.environ.get("TOOLS_JSON", os.path.join(ROOT, "tools.json"))
-summary = []
+summary: list[str] = []
 
 
-def get(url, accept="application/vnd.github+json"):
+def get(url: str, accept: str = "application/vnd.github+json") -> bytes:
     req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "friday-tools-bump"})
     tok = os.environ.get("GH_TOKEN")
     if tok and url.startswith("https://api.github.com/"):
         req.add_header("Authorization", f"Bearer {tok}")
     with urllib.request.urlopen(req, timeout=120) as r:
-        return r.read()
+        data: bytes = r.read()
+        return data
 
 
-def ver(s):
+def ver(s: str) -> tuple[int, ...]:
     return tuple(int(x) for x in s.lstrip("v").split("-")[0].split("."))
 
 
-def same_series(old, new):
+def same_series(old: str, new: str) -> bool:
     o, n = ver(old), ver(new)
     return o[:2] == n[:2] if o[0] == 0 else o[0] == n[0]
 
 
-def smoke(tool, name, path, version):
+def smoke(tool: dict[str, Any], name: str, path: str, version: str) -> None:
     with tempfile.TemporaryDirectory() as d:
         with tarfile.open(path) as t:
             t.extractall(d, filter="data")
         exe = os.path.join(d, name)
         # The new build runs with nothing secret in reach (CI also runs this
         # in a job with a read-only token and no saved credentials).
-        env = {k: v for k, v in os.environ.items() if "TOKEN" not in k and not k.startswith(("GITHUB_", "ACTIONS_"))}
-        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60, env=env).stdout
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if "TOKEN" not in k and not k.startswith(("GITHUB_", "ACTIONS_"))
+        }
+        out = subprocess.run(
+            [exe, "--version"], capture_output=True, text=True, timeout=60, env=env
+        ).stdout
         if version not in out:
             raise RuntimeError(f"--version says {out.strip()!r}, not {version}")
         s = tool.get("smoke")
         if s:
-            r = subprocess.run([exe] + s["args"], capture_output=True, text=True, timeout=120, env=env)
+            r = subprocess.run(
+                [exe] + s["args"], capture_output=True, text=True, timeout=120, env=env
+            )
             if s["expect"] not in r.stdout:
                 raise RuntimeError(f"smoke test: {s['expect']!r} not in its output")
 
 
-def main():
+def main() -> int:
     tools = json.load(open(MANIFEST))
     moved, rc = [], 0
     for name, tool in tools.items():
@@ -67,7 +85,9 @@ def main():
             summary.append(f"- {name}: {tool['version']} is the newest.")
             continue
         if not same_series(tool["version"], new):
-            summary.append(f"- {name}: {new} is a new series (pinned {tool['version']}); a person decides.")
+            summary.append(
+                f"- {name}: {new} is a new series (pinned {tool['version']}); a person decides."
+            )
             rc = max(rc, 3)
             continue
         try:
@@ -84,7 +104,10 @@ def main():
                     smoke(tool, name, os.path.join(d, linux["name"]), new)
             for plat, h in sums.items():
                 tool["assets"][plat]["sha256"] = h
-            summary.append(f"- {name}: {tool['version']} → {new}: assets downloaded, checksums recorded, Linux build smoke-tested.")
+            summary.append(
+                f"- {name}: {tool['version']} → {new}: assets downloaded, "
+                "checksums recorded, Linux build smoke-tested."
+            )
             tool["version"] = new
             moved.append(name)
         except Exception as e:  # noqa: BLE001
@@ -97,7 +120,7 @@ def main():
     return finish(rc)
 
 
-def finish(rc):
+def finish(rc: int) -> int:
     text = "\n".join(summary)
     print(text)
     if os.environ.get("SUMMARY_FILE"):
