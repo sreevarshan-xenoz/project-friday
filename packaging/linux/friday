@@ -161,6 +161,7 @@ Skill Forge:
 Desktop & System Substrate:
   friday shell [start|restart|stop] Run FRIDAY Shell (bar, drawers, notifications)
   friday shell <drawer>            Toggle a drawer: friday control calendar launcher session
+  friday shell overview            Every workspace with its windows (Super+Tab)
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
   friday shell style [name]        Shell style: ember, lean, island, dock (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
@@ -5081,7 +5082,8 @@ action-check|Before a risky action, say what will change; after it, check and sa
 clipboard-clear|A password or key left on the clipboard is cleared after 2 minutes, with clips on or off
 always-allow|A harmless action (open an app, a link or a file; copy) can be allowed for good, per exact action, for 30 days
 mic-level|While FRIDAY listens, a thin bar in the answer card moves with your voice (red when the mic is muted)
-battery-model|On battery, a local model you picked for asks or chores gives way to a smaller one of its family you already have"
+battery-model|On battery, a local model you picked for asks or chores gives way to a smaller one of its family you already have
+workspace-overview|Super+Tab shows every workspace with its windows; drag a window onto another to move it"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
@@ -7614,7 +7616,8 @@ $offer"
       ipc)     shift; exec quickshell -p "$dir" ipc call -- "$@" ;;
       friday|control|calendar|launcher|session)
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
-      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
+      overview) exec quickshell -p "$dir" ipc call overview toggle ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
     esac
     ;;
   daemon)
