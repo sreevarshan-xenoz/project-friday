@@ -23,9 +23,29 @@ PanelWindow {
 
   readonly property bool island: Theme.style === "island"
 
+  // Auto-hide (Look > Auto-hide bar; shell.json "barAutoHide"; off unless
+  // turned on): the bar slides off its edge and windows get the space; the
+  // pointer at the edge, an open drawer, or FRIDAY listening or working brings
+  // it back, and it goes half a second after the pointer leaves. An idea from
+  // end-4/dots-hyprland (see CREDITS.md).
+  readonly property bool autoHide: Config.barAutoHide
+  readonly property bool wanted: barHover.hovered || Shell.isOpen(Shell.drawer, bar.modelData.name)
+    || Answer.state === "listening" || Friday.working
+  property bool held: false
+  onWantedChanged: if (wanted) { held = true; leave.stop(); } else leave.restart()
+  Timer { id: leave; interval: 500; onTriggered: bar.held = false }
+  readonly property bool hidden: autoHide && !wanted && !held
+  // How far the bar has slid off its edge.
+  property real slide: hidden ? Theme.barReach + 6 : 0
+  Behavior on slide { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+  HoverHandler { id: barHover }
+
   anchors { top: !Theme.barAtBottom; bottom: Theme.barAtBottom; left: true; right: true }
   // Room for the island to open below the bar (it's masked, so clicks pass).
   implicitHeight: (Theme.floating ? Theme.barReach : Theme.barHeight + Theme.fillet) + 40
+  // Auto-hide: no space kept for it, and it sits on the very edge even while
+  // other panels keep theirs.
+  exclusionMode: autoHide ? ExclusionMode.Ignore : ExclusionMode.Normal
   exclusiveZone: Theme.floating ? Theme.barReach : Theme.barHeight
   color: "transparent"
   WlrLayershell.namespace: "friday-bar"
@@ -34,21 +54,26 @@ PanelWindow {
   // Only the bar takes input: the strip, or in the island style just its
   // pills, so clicks between them reach the windows below.
   mask: Region {
-    item: bar.island ? null : Theme.keystone ? notch : strip
-    Region { item: bar.island ? leftPill : null }
-    Region { item: centre.capsule }
-    Region { item: bar.island ? rightPill : null }
+    item: bar.hidden ? edgeStrip : bar.island ? null : Theme.keystone ? notch : strip
+    Region { item: !bar.hidden && bar.island ? leftPill : null }
+    Region { item: bar.hidden ? null : centre.capsule }
+    Region { item: !bar.hidden && bar.island ? rightPill : null }
+  }
+
+  // Auto-hide: the strip along the edge that brings the bar back.
+  Item {
+    id: edgeStrip
+    anchors { left: parent.left; right: parent.right }
+    y: Theme.barAtBottom ? parent.height - height : 0
+    height: 3
   }
 
   Rectangle {
     id: strip
-    anchors {
-      top: Theme.barAtBottom ? undefined : parent.top
-      bottom: Theme.barAtBottom ? parent.bottom : undefined
-      left: parent.left
-      right: parent.right
-      margins: Theme.barInset
-    }
+    // Placed by y rather than a top or bottom anchor: a style switch that
+    // swaps the anchors can leave the old one set and stretch the strip.
+    anchors { left: parent.left; right: parent.right; margins: Theme.barInset }
+    y: Theme.barAtBottom ? parent.height - height - Theme.barInset + bar.slide : Theme.barInset - bar.slide
     height: Theme.barHeight
     radius: Theme.floating ? height / 2 : 0
     color: bar.island || Theme.keystone ? "transparent" : Theme.glass
@@ -62,15 +87,15 @@ PanelWindow {
     visible: Theme.keystone
     x: leftGroup.x - 16
     width: rightGroup.x + rightGroup.width + 16 - x
-    y: -radius
+    y: -radius - bar.slide
     height: Theme.barHeight + radius
     radius: 16
     color: Theme.glass
     border.width: 1
     border.color: Theme.glassEdge
   }
-  Corner { visible: Theme.keystone; size: 10; leftSide: false; x: notch.x - size; y: 0 }
-  Corner { visible: Theme.keystone; size: 10; leftSide: true; x: notch.x + notch.width; y: 0 }
+  Corner { visible: Theme.keystone; size: 10; leftSide: false; x: notch.x - size; y: -bar.slide }
+  Corner { visible: Theme.keystone; size: 10; leftSide: true; x: notch.x + notch.width; y: -bar.slide }
 
   Corner { visible: !Theme.floating && !Theme.keystone; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
   Corner { visible: !Theme.floating && !Theme.keystone; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }

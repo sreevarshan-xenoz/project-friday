@@ -290,6 +290,16 @@ for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn d
   timeout 10 qs -p "$FS" ipc call shell close >/dev/null 2>&1 || true
   kill -0 "$QS" 2>/dev/null || { fail "FRIDAY Shell exited switching to ${look} (see $W/friday.log)"; break; }
 done
+# Auto-hide: with no pointer at the edge the bar slides away, so the top half
+# holds next to none of its background.
+printf '{ "style": "lean", "palette": "core", "barAutoHide": true }\n' >"$HOME/.config/friday/shell.json"
+sleep 3; grim "$W/look-autohide.png" 2>/dev/null || true
+if [[ -s "$W/look-autohide.png" ]] && need python3; then
+  n=$(python3 "$(dirname "$0")/png_colour.py" "$W/look-autohide.png" "#${look_bg[core]}" top 2>/dev/null || echo 99999)
+  if (( n < 1000 )); then pass "auto-hide: the bar is away (${n} px of its colour at the top)"
+  else fail "auto-hide: the bar is still showing (${n} px of its colour at the top)"; fi
+fi
+kill -0 "$QS" 2>/dev/null || fail "FRIDAY Shell exited with auto-hide on (see $W/friday.log)"
 timeout 10 qs -p "$FS" ipc call notifications dismissAll >/dev/null 2>&1 \
   && pass "notifications IPC answers" || fail "notifications IPC did not answer"
 # A malformed settings file must not break the shell.

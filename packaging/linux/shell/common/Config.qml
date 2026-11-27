@@ -59,6 +59,8 @@ Singleton {
   readonly property bool dock: pick("dock", false) === true
   // The shelf on the right edge (off unless turned on).
   readonly property bool shelf: pick("shelf", false) === true
+  // The bar slides away until the pointer reaches its edge (off unless on).
+  readonly property bool barAutoHide: pick("barAutoHide", false) === true
 
   function pick(key, fallback) {
     const v = root.settings[key];
