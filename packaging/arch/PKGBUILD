@@ -45,6 +45,7 @@ optdepends=(
   'hyprlock: the lock screen (friday lock)'
   'hypridle: dim, lock and screen off when idle (friday idle)'
   'swaybg: the desktop wallpaper (friday wallpaper)'
+  'imagemagick: an accent colour from the wallpaper (friday wallpaper)'
   'networkmanager: network status in FRIDAY Shell'
   'friday-mobile: pair a phone (friday phone) and answer FRIDAY from it'
   'fd: file search in the FRIDAY Shell launcher'

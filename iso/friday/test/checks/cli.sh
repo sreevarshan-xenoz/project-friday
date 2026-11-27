@@ -3006,13 +3006,36 @@ rm -f "$S/hypridle" "$S/idle-runs" "$S/not-a-dir"
 hash="$HOME/wall #2.jpg"; : >"$hash"
 "${dk_env[@]}" bash "$F" wallpaper "$hash" >/dev/null; "${dk_env[@]}" bash "$F" lock
 contains "a \"#\" in the wallpaper's name is escaped for hyprlock" "$(cat "$lock")" "path = $HOME/wall ##2.jpg"
-# Two quick changes (Super+Ctrl+T held) leave exactly one swaybg.
+# Two quick changes (Super+Ctrl+Shift+T held) leave exactly one swaybg.
 # (Each within 10 s: a lock held by swaybg would stall the second for good.)
 timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null & timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$HOME/wall-two.jpg" >/dev/null; wait
 s0=$SECONDS; timeout 10 "${dk_env[@]}" bash "$F" wallpaper "$img" >/dev/null
 (( SECONDS - s0 < 5 )) && pass "a wallpaper change doesn't wait on the running swaybg" || fail "a wallpaper change waited $((SECONDS - s0)) s (swaybg holds the lock)"
 n=0; for p in $(ps -eo pid=,args= | awk -v b="$S/swaybg" '$2 == "/bin/bash" && $3 == b {print $1}'); do dk_alive "$p" && n=$((n+1)); done
 [[ $n == 1 ]] && pass "quick wallpaper changes leave one swaybg" || fail "quick changes left $n swaybg running"
+# A wallpaper brings its accent (wallpaper-accent; needs ImageMagick): the
+# shell and the window borders take it, a chosen palette or the switch off
+# drops it.
+if command -v magick >/dev/null 2>&1; then
+  blue="$HOME/blue.jpg"; magick -size 64x36 xc:'#2060e0' "$blue"
+  "${dk_env[@]}" bash "$F" wallpaper "$blue" >/dev/null
+  wa=$(jq -r '.wallpaperAccent // empty' "$HOME/.config/friday/shell.json")
+  if [[ $wa =~ ^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$ ]] && (( 16#${BASH_REMATCH[3]} > 16#${BASH_REMATCH[1]} + 60 && 16#${BASH_REMATCH[3]} > 16#${BASH_REMATCH[2]} )); then
+    pass "a blue wallpaper gives a blue accent ($wa)"
+  else fail "a blue wallpaper's accent: '$wa'"; fi
+  contains "the window borders take it" "$(cat "$HOME/.config/friday/hypr-look.lua")" "rgba(${wa#\#}ee)"
+  "${dk_env[@]}" bash "$F" shell palette polar >/dev/null
+  if jq -e '.wallpaperAccent' "$HOME/.config/friday/shell.json" >/dev/null; then fail "choosing a palette kept the wallpaper's accent"
+  else pass "choosing a palette drops the wallpaper's accent"; fi
+  "${dk_env[@]}" bash "$F" feature wallpaper-accent off >/dev/null
+  "${dk_env[@]}" bash "$F" wallpaper "$blue" >/dev/null
+  if jq -e '.wallpaperAccent' "$HOME/.config/friday/shell.json" >/dev/null; then fail "wallpaper-accent off still set an accent"
+  else pass "with wallpaper-accent off, the palette's accent stays"; fi
+  "${dk_env[@]}" bash "$F" feature wallpaper-accent on >/dev/null
+  rm -f "$blue"
+else
+  echo "  (skipped: the wallpaper accent needs ImageMagick)"
+fi
 "${dk_env[@]}" bash "$F" wallpaper off >/dev/null; rm -f "$S/swaybg" "$S/hyprlock" "$S/pgrep"
 
 echo "doctor"

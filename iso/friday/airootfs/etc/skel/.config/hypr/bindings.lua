@@ -39,7 +39,8 @@ o.bind("SUPER + CTRL + comma", "Toggle do not disturb", "friday shell ipc notifi
 
 -- Tools
 o.bind("SUPER + V", "Clipboard history", "friday clips pick")
-o.bind("SUPER + CTRL + T", "Next wallpaper", "friday wallpaper next")
+o.bind("SUPER + CTRL + T", "Pick a wallpaper", "friday shell wallpaper")
+o.bind("SUPER + CTRL + SHIFT + T", "Next wallpaper", "friday wallpaper next")
 o.bind("SUPER + SHIFT + C", "Colour picker", "pkill hyprpicker || hyprpicker -a")
 o.bind("SUPER + SHIFT + S", "Screenshot", "omarchy-capture-screenshot")
 o.bind("SUPER + SHIFT + R", "Screen recording", "omarchy-capture-screenrecording --stop-recording || omarchy-capture-screenrecording")

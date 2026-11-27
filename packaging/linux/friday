@@ -162,6 +162,7 @@ Desktop & System Substrate:
   friday shell [start|restart|stop] Run FRIDAY Shell (bar, drawers, notifications)
   friday shell <drawer>            Toggle a drawer: friday control calendar launcher session
   friday shell overview            Every workspace with its windows (Super+Tab)
+  friday shell wallpaper           Pick a wallpaper (Super+Ctrl+T)
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
   friday shell style [name]        Shell style: ember, lean, island, dock (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
@@ -220,6 +221,8 @@ shell_window_look() {
     classic|omarchy) accent="" outline="" ;;
     *)       palette=core accent=d42d51 outline=343842 ;;
   esac
+  local wa; wa=$(jq -r '.wallpaperAccent // empty' "$conf" 2>/dev/null || true)
+  if [ -n "$accent" ] && [[ "$wa" =~ ^#[0-9a-fA-F]{6}$ ]] && friday_feature_on wallpaper-accent; then accent=${wa#\#}; fi
   {
     echo "-- FRIDAY Shell's look for windows (style: $style, palette: $palette)."
     echo "-- Written by \`friday shell style|palette\`; edits are replaced on the next change."
@@ -296,7 +299,7 @@ friday_wallpapers_dir=/usr/share/friday/wallpapers
 friday_wallpaper_show() {
   local conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json" f old pidfile
   pidfile="$(friday_run)/friday-wallpaper-$(id -u).pid"
-  # One change at a time (Super+Ctrl+T pressed quickly), so no swaybg is lost.
+  # One change at a time (Super+Ctrl+Shift+T pressed quickly), so no swaybg is lost.
   exec 9>"$pidfile.lock"; flock 9
   f=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
   old=$(cat "$pidfile" 2>/dev/null || true)
@@ -311,6 +314,43 @@ friday_wallpaper_show() {
   fi
   if [ -n "$old" ] && [ "$(cat "/proc/$old/comm" 2>/dev/null)" = swaybg ]; then kill "$old" 2>/dev/null || true; fi
   exec 9>&-
+}
+
+# The accent a wallpaper suggests (feature wallpaper-accent): its strongest
+# hue at a lightness that reads on FRIDAY's dark surfaces (darker on the
+# light "dawn"), as "#rrggbb"; nothing for a grey picture, for the
+# high-contrast and classic palettes, or without ImageMagick. $1 = image,
+# $2 = palette.
+friday_wallpaper_accent() {
+  case "$2" in contrast|classic|omarchy) return 0 ;; esac
+  command -v magick >/dev/null 2>&1 || return 0
+  local light=0.55; [ "$2" = dawn ] && light=0.42
+  magick -define jpeg:size=256x144 "$1" -resize '128x72!' -depth 8 txt:- 2>/dev/null | awk -v L="$light" '
+    function hue2rgb(p, q, t) { if (t < 0) t += 1; if (t > 1) t -= 1
+      if (t < 1/6) return p + (q - p) * 6 * t; if (t < 1/2) return q
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6; return p }
+    match($0, /#[0-9A-Fa-f]{6}/) {
+      hex = substr($0, RSTART + 1, 6); n++
+      r = strtonum("0x" substr(hex, 1, 2)) / 255; g = strtonum("0x" substr(hex, 3, 2)) / 255; b = strtonum("0x" substr(hex, 5, 2)) / 255
+      mx = r; if (g > mx) mx = g; if (b > mx) mx = b
+      mn = r; if (g < mn) mn = g; if (b < mn) mn = b
+      d = mx - mn; l = (mx + mn) / 2
+      if (d < 0.06) next
+      sat = d / (1 - (2 * l - 1 < 0 ? 1 - 2 * l : 2 * l - 1))
+      if (mx == r) h = (g - b) / d; else if (mx == g) h = (b - r) / d + 2; else h = (r - g) / d + 4
+      h = h / 6; if (h < 0) h += 1
+      w = sat * d * d * ((l > 0.05 && l < 0.92) ? 1 : 0)
+      k = int(h * 12) % 12
+      W[k] += w; X[k] += w * cos(h * 6.2831853); Y[k] += w * sin(h * 6.2831853); S[k] += w * sat
+    }
+    END {
+      best = -1; for (k = 0; k < 12; k++) if (W[k] > best) { best = W[k]; bk = k }
+      if (n == 0 || best < n * 0.0006) exit
+      h = atan2(Y[bk], X[bk]) / 6.2831853; if (h < 0) h += 1
+      s = S[bk] / W[bk]; if (s < 0.6) s = 0.6; if (s > 0.9) s = 0.9
+      q = L < 0.5 ? L * (1 + s) : L + s - L * s; p = 2 * L - q
+      printf "#%02x%02x%02x\n", hue2rgb(p, q, h + 1/3) * 255 + 0.5, hue2rgb(p, q, h) * 255 + 0.5, hue2rgb(p, q, h - 1/3) * 255 + 0.5
+    }'
 }
 
 # `friday wallpaper [current|list|next|show|off|<image>]`.
@@ -335,14 +375,21 @@ friday_wallpaper() {
       f=$(realpath -e -- "$1" 2>/dev/null) || { echo "friday: no such image: $1" >&2; return 1; }
       [ -f "$f" ] || { echo "friday: not an image file: $1" >&2; return 1; } ;;
   esac
+  local accent=""
+  if [ -n "$f" ] && friday_feature_on wallpaper-accent; then
+    # Best effort: a picture ImageMagick can't read just keeps the palette's.
+    accent=$(friday_wallpaper_accent "$f" "$(jq -r '.palette // "core"' "$conf" 2>/dev/null || echo core)" || true)
+  fi
   mkdir -p "$(dirname "$conf")"
   local tmp; tmp=$(mktemp "$conf.XXXXXX")
-  if ! jq --arg v "$f" 'if $v == "" then del(.wallpaper) else .wallpaper = $v end' "$conf" >"$tmp" 2>/dev/null; then
-    jq -n --arg v "$f" 'if $v == "" then {} else {wallpaper: $v} end' >"$tmp"
+  local set='(if $v == "" then del(.wallpaper) else .wallpaper = $v end) | (if $a == "" then del(.wallpaperAccent) else .wallpaperAccent = $a end)'
+  if ! jq --arg v "$f" --arg a "$accent" "$set" "$conf" >"$tmp" 2>/dev/null; then
+    jq -n --arg v "$f" --arg a "$accent" "{} | $set" >"$tmp"
   fi
   mv -f "$tmp" "$conf"
   friday_wallpaper_show
-  if [ -n "$f" ]; then echo "Wallpaper: $f"; else echo "FRIDAY no longer sets a wallpaper."; fi
+  shell_window_look
+  if [ -n "$f" ]; then echo "Wallpaper: $f${accent:+ (accent $accent)}"; else echo "FRIDAY no longer sets a wallpaper."; fi
 }
 
 # One colour from FRIDAY Shell's palette, as Theme.qml defines it: $1 =
@@ -5083,7 +5130,8 @@ clipboard-clear|A password or key left on the clipboard is cleared after 2 minut
 always-allow|A harmless action (open an app, a link or a file; copy) can be allowed for good, per exact action, for 30 days
 mic-level|While FRIDAY listens, a thin bar in the answer card moves with your voice (red when the mic is muted)
 battery-model|On battery, a local model you picked for asks or chores gives way to a smaller one of its family you already have
-workspace-overview|Super+Tab shows every workspace with its windows; drag a window onto another to move it"
+workspace-overview|Super+Tab shows every workspace with its windows; drag a window onto another to move it
+wallpaper-accent|A new wallpaper brings its own accent colour to FRIDAY Shell and the window borders (the background stays dark)"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
@@ -7604,7 +7652,8 @@ $offer"
         esac
         mkdir -p "$(dirname "$conf")"
         tmp=$(mktemp "$conf.XXXXXX")
-        if ! jq --arg k "$key" --arg v "$1" '.[$k] = $v' "$conf" >"$tmp" 2>/dev/null; then
+        # Choosing a palette means its accent, not the wallpaper's.
+        if ! jq --arg k "$key" --arg v "$1" '.[$k] = $v | if $k == "palette" then del(.wallpaperAccent) else . end' "$conf" >"$tmp" 2>/dev/null; then
           jq -n --arg k "$key" --arg v "$1" '{($k): $v}' >"$tmp"
         fi
         mv -f "$tmp" "$conf"
@@ -7617,7 +7666,8 @@ $offer"
       friday|control|calendar|launcher|session)
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
       overview) exec quickshell -p "$dir" ipc call overview toggle ;;
-      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
+      wallpaper) exec quickshell -p "$dir" ipc call wallpaper toggle ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
     esac
     ;;
   daemon)
