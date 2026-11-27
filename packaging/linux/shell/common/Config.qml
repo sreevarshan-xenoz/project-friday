@@ -59,6 +59,8 @@ Singleton {
   function set(key, value) {
     const next = Object.assign({}, root.settings);
     next[key] = value;
+    // A chosen palette brings its own accent, not the wallpaper's.
+    if (key === "palette") delete next.wallpaperAccent;
     root.settings = next;
     file.setText(JSON.stringify(next, null, 2) + "\n");
   }

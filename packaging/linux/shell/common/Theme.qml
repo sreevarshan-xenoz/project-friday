@@ -187,8 +187,17 @@ Singleton {
   readonly property color text: c("text")
   readonly property color subtext: c("subtext")
   readonly property color faint: c("faint")
-  readonly property color accent: c("accent")
-  readonly property color onAccent: c("onAccent")
+  // The wallpaper's own accent (`friday wallpaper` works it out; switch:
+  // wallpaper-accent), else the palette's. Text on it is dark or light by
+  // its brightness.
+  readonly property string wallpaperAccent: {
+    const v = Config.pick("wallpaperAccent", "");
+    return Config.featureOn("wallpaper-accent") && Config.palette !== "classic" && !highContrast && /^#[0-9a-fA-F]{6}$/.test(v) ? v : "";
+  }
+  readonly property color accent: wallpaperAccent || c("accent")
+  readonly property color onAccent: wallpaperAccent
+    ? (0.2126 * accent.r + 0.7152 * accent.g + 0.0722 * accent.b > 0.5 ? "#111318" : "#fff4f6")
+    : c("onAccent")
   readonly property color signal: c("signal")
   readonly property color error: c("error")
   readonly property color warn: c("warn")

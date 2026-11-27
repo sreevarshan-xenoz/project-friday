@@ -5,7 +5,7 @@
 //
 // One bar per screen, flush with the top edge; drawers that grow out of it
 // (FRIDAY, controls, calendar, launcher, session); FRIDAY's answer pill;
-// notifications; an OSD; the workspace overview.
+// notifications; an OSD; the workspace overview; the wallpaper picker.
 // Run it with `friday shell` or `qs -p /usr/share/friday/shell`.
 import QtQuick
 import Quickshell
@@ -18,6 +18,7 @@ import qs.drawers
 import qs.notifications
 import qs.osd
 import qs.overview
+import qs.wallpaper
 import qs.ring
 import qs.settings
 import qs.common
@@ -39,6 +40,7 @@ ShellRoot {
       CaptionOverlay { modelData: perScreen.modelData }
       RingOverlay { modelData: perScreen.modelData }
       Overview { modelData: perScreen.modelData }
+      WallpaperPicker { modelData: perScreen.modelData }
     }
   }
 
