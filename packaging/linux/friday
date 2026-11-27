@@ -273,6 +273,17 @@ shell_window_look() {
   if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then hyprctl reload >/dev/null 2>&1 || true; fi
 }
 
+# Where FRIDAY keeps its small runtime files (pid files, the terminal
+# watch): $XDG_RUNTIME_DIR, this user's own; without one, run/ in FRIDAY's
+# state folder, never a shared /tmp where another user could plant a file
+# FRIDAY then trusts. The daemon picks the same (friday_mobile::runtime_dir).
+friday_run() {
+  if [ -n "${XDG_RUNTIME_DIR:-}" ]; then echo "$XDG_RUNTIME_DIR"; return 0; fi
+  local d="${XDG_STATE_HOME:-$HOME/.local/state}/friday/run"
+  mkdir -p "$d" 2>/dev/null && chmod 700 "$d" 2>/dev/null || true
+  echo "$d"
+}
+
 # FRIDAY OS's own desktop pieces, the jobs Omarchy's shell used to do:
 # the wallpaper (shell.json "wallpaper", drawn by swaybg: 15 MB, where
 # drawing it in FRIDAY Shell cost ~90 MB), the lock screen (hyprlock in
@@ -283,7 +294,7 @@ friday_wallpapers_dir=/usr/share/friday/wallpapers
 # swaybg starts before the old one stops, so the desktop never flashes bare.
 friday_wallpaper_show() {
   local conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json" f old pidfile
-  pidfile="${XDG_RUNTIME_DIR:-/tmp}/friday-wallpaper-$(id -u).pid"
+  pidfile="$(friday_run)/friday-wallpaper-$(id -u).pid"
   # One change at a time (Super+Ctrl+T pressed quickly), so no swaybg is lost.
   exec 9>"$pidfile.lock"; flock 9
   f=$(jq -r '.wallpaper // empty' "$conf" 2>/dev/null || true)
@@ -2612,7 +2623,7 @@ EOF2
 # desktop, and do it again by name (friday-ctl routine).
 friday_routine() {
   command -v friday-ctl >/dev/null 2>&1 || { echo "friday: friday-ctl is not installed" >&2; return 1; }
-  local pidf="${XDG_RUNTIME_DIR:-/tmp}/friday-recording.pid" nidf="${XDG_RUNTIME_DIR:-/tmp}/friday-recording.nid" pid nid
+  local pidf="$(friday_run)/friday-recording.pid" nidf="$(friday_run)/friday-recording.nid" pid nid
   case "${1:-list}" in
     save|run|rm|list) friday-ctl routine "$@" ;;
     # Teach one by doing it: apps you open, windows you move, workspaces you
@@ -2728,7 +2739,7 @@ friday_routine_find() {
 # computer plays (or, with --mic, the microphone), on screen and in a notes
 # file. whisper.cpp on this computer; nothing is sent (friday-ctl listen).
 friday_captions() {
-  local run="${XDG_RUNTIME_DIR:-/tmp}" pidfile out pid=""
+  local run="$(friday_run)" pidfile out pid=""
   pidfile="$run/friday-captions-$(id -u).pid" out="$run/friday-captions-$(id -u).out"
   if [ -f "$pidfile" ]; then
     pid=$(cat "$pidfile")
@@ -3229,7 +3240,7 @@ friday_voice_speak() {
 }
 
 friday_hold() {
-  local d="${XDG_RUNTIME_DIR:-/tmp}/friday-hold-$(id -u)"
+  local d="$(friday_run)/friday-hold-$(id -u)"
   mkdir -p "$d" && chmod 700 "$d"
   pill() { command -v quickshell >/dev/null 2>&1 && timeout 3 bash "$0" shell ipc answer "$@" >/dev/null 2>&1; }
   case "${1:-}" in
@@ -3258,7 +3269,7 @@ friday_hold() {
       rm -f "$d/rec.pid" "$d/recording" "$d/rec.wav"
       # The key stops FRIDAY talking at once, tap or hold, and ends a wait
       # for a spoken follow-up or run/cancel (the key is the answer now).
-      [ ! -s "${XDG_RUNTIME_DIR:-/tmp}/friday-say.pid" ] || friday-ctl say --stop >/dev/null 2>&1 || true
+      [ ! -s "$(friday_run)/friday-say.pid" ] || friday-ctl say --stop >/dev/null 2>&1 || true
       pkill -u "$(id -u)" -f "friday-ctl listen answer" 2>/dev/null || true
       # Each press has its own token, so the timer of an earlier tap can't
       # start a recording for a later press that recreated the marker.
@@ -3586,7 +3597,7 @@ friday_shell_hook() {
   case "${1:-zsh}" in
     zsh) cat <<'EOF'
 zmodload zsh/datetime 2>/dev/null
-typeset -g _friday_tf="${XDG_RUNTIME_DIR:-/tmp}/friday-term/$$" _friday_cmd="" _friday_dir=""
+typeset -g _friday_tf="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/friday/run}/friday-term/$$" _friday_cmd="" _friday_dir=""
 _friday_term() { mkdir -p -m 700 "${_friday_tf:h}" 2>/dev/null; print -r -- "$1"$'\t'"${EPOCHSECONDS:-0}"$'\t'"$2"$'\t'"$_friday_dir"$'\t'"$_friday_cmd" >| "$_friday_tf" 2>/dev/null; }
 _friday_preexec() { _friday_cmd=${1//[$'\t\n']/ } _friday_dir=$PWD; _friday_term running -; }
 _friday_precmd() { local s=$?; [[ -n $_friday_cmd ]] && _friday_term done $s; _friday_cmd=""; return 0; }
@@ -3603,7 +3614,7 @@ EOF
 # The DEBUG trap records the first command after a prompt that isn't one of
 # PROMPT_COMMAND's own (starship and the like). With bash-preexec, its hooks
 # are used instead.
-_friday_tf="${XDG_RUNTIME_DIR:-/tmp}/friday-term/$$" _friday_cmd="" _friday_dir="" _friday_ready=""
+_friday_tf="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/friday/run}/friday-term/$$" _friday_cmd="" _friday_dir="" _friday_ready=""
 _friday_term() { mkdir -p -m 700 "${_friday_tf%/*}" 2>/dev/null; printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(date +%s)" "$2" "$_friday_dir" "$_friday_cmd" >| "$_friday_tf" 2>/dev/null; }
 _friday_start() { local n c; read -r n c <<<"$(HISTTIMEFORMAT= history 1)"; _friday_cmd=${1:-$c}; _friday_cmd=${_friday_cmd//[$'\t\n']/ } _friday_dir=$PWD; _friday_term running -; }
 _friday_debug() { [[ -n $_friday_ready ]] || return 0; local p="${PROMPT_COMMAND[*]}" b="$BASH_COMMAND"; [[ ${p//[[:space:]]/} != *"${b//[[:space:]]/}"* ]] || return 0; _friday_ready=""; _friday_start; }
@@ -3629,7 +3640,7 @@ EOF
 # "state\twhen\texit\tfolder\tcommand\tshell pid\twindow class", or nothing.
 friday_term_record() {
   command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 0
-  local dir="${XDG_RUNTIME_DIR:-/tmp}/friday-term" win pid cls pids p f best=""
+  local dir="$(friday_run)/friday-term" win pid cls pids p f best=""
   [ -d "$dir" ] || return 0
   win=$(timeout 2 hyprctl activewindow -j 2>/dev/null) || return 0
   pid=$(jq -r '.pid // empty' <<<"$win" 2>/dev/null) cls=$(jq -r '.class // empty' <<<"$win" 2>/dev/null)
@@ -3661,7 +3672,7 @@ friday_term_text() {
 # friday term-watch <pid>: wait for that shell's running command to finish
 # (up to a day), then say how it went.
 friday_term_watch() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/friday-term/$1" line state when code cmd start="" i
+  local f="$(friday_run)/friday-term/$1" line state when code cmd start="" i
   [[ "$1" =~ ^[0-9]+$ ]] || return 1
   for ((i = 0; i < 43200; i++)); do
     # The shell closed (or was killed): nothing more will come.
@@ -7548,7 +7559,7 @@ $offer"
     [ -f "$dir/shell.qml" ] || dir=/usr/share/friday/shell
     [ -f "$dir/shell.qml" ] || { echo "friday: FRIDAY Shell not found ($dir)" >&2; exit 1; }
     command -v quickshell >/dev/null 2>&1 || { echo "friday: quickshell is not installed" >&2; exit 1; }
-    pidfile="${XDG_RUNTIME_DIR:-/tmp}/friday-shell-$(id -u).pid"
+    pidfile="$(friday_run)/friday-shell-$(id -u).pid"
     supervisor=""
     if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then supervisor=$(cat "$pidfile"); fi
     case "${1:-start}" in

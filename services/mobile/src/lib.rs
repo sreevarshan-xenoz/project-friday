@@ -73,6 +73,37 @@ pub mod web_search;
 pub mod win_insert;
 pub mod workspace;
 
+/// Where FRIDAY keeps its small runtime files (pid files, recordings):
+/// `$XDG_RUNTIME_DIR`, which is this user's own; without one, `run` in
+/// FRIDAY's state folder (`~/.local/state/friday/run`), never a shared
+/// `/tmp` where another user could plant a pid file FRIDAY would then stop.
+/// The CLI's `friday_run` picks the same folder. (Windows' temp folder is
+/// already per user.)
+pub fn runtime_dir() -> std::path::PathBuf {
+    if let Some(d) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        return std::path::PathBuf::from(d);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let state = std::env::var_os("XDG_STATE_HOME")
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))
+            })
+            .unwrap_or_else(std::env::temp_dir);
+        let d = state.join("friday").join("run");
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&d);
+        d
+    }
+    #[cfg(not(unix))]
+    std::env::temp_dir()
+}
+
 /// The next message from a broadcast receiver, or `None` once it is closed. A receiver
 /// that fell behind skips what it missed and carries on: `while let Ok(..) = rx.recv()`
 /// would end the loop (and with it the goal runner) the first time the bus overflowed.

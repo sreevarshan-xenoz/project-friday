@@ -39,6 +39,9 @@ pub fn default_parent() -> PathBuf {
 /// what a running FRIDAY holds open, and earlier restores' leftovers.
 const SKIP_DIRS: &[&str] = &[
     "voice", "whisper", "local-ai", "models", "engine", "bin", "logs", "cache", "tmp", "outputs",
+    // Runtime files (pid files, a recording in progress) when there is no
+    // XDG_RUNTIME_DIR: see `runtime_dir`.
+    "run",
 ];
 const SKIP_PREFIXES: &[&str] = &["before-restore-", ".friday-voice-setup-", "friday-backup-"];
 /// The running daemon's state: its session token and address, not the person's.
@@ -516,6 +519,7 @@ mod tests {
         put(&state, "agents/r1.json", "{}");
         put(&state, "voice/model/model.onnx", "big");
         put(&state, "friday-say.pid", "123");
+        put(&state, "run/friday-recording.txt", "events");
         let sources = [("config", config.clone()), ("state", state.clone())];
         let (backup, n) = create(&sources, &out, "2026-11-23-2000").unwrap();
         assert_eq!(n, 4, "memory, env, answers, agent record");
@@ -525,6 +529,7 @@ mod tests {
         assert!(!env.contains("not-a-real-one"));
         assert!(!backup.join("state/voice").exists());
         assert!(!backup.join("state/friday-say.pid").exists());
+        assert!(!backup.join("state/run").exists());
         assert!(check(&backup).is_ok());
         for d in [config, state, out] {
             let _ = std::fs::remove_dir_all(d);

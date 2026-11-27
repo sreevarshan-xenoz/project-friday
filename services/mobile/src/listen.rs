@@ -374,10 +374,7 @@ pub fn transcribe(whisper: &Path, model: &Path, samples: &[i16]) -> Option<Strin
 /// Runs whisper.cpp on a piece: tidied (fillers, dictionary) or word for
 /// word (captions of what the computer plays).
 fn transcribe_as(whisper: &Path, model: &Path, samples: &[i16], tidy: bool) -> Option<String> {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let file = dir.join(format!("friday-listen-{}.wav", std::process::id()));
+    let file = crate::runtime_dir().join(format!("friday-listen-{}.wav", std::process::id()));
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create(true).truncate(true);
     #[cfg(unix)]

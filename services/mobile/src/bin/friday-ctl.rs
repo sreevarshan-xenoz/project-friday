@@ -95,10 +95,7 @@ fn confirm_context_consent() -> bool {
 fn watch(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::watch::{self as w, Kitty, Region, RegionEvent};
     use std::process::{Command, ExitCode, Stdio};
-    let pidfile = std::path::PathBuf::from(
-        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()),
-    )
-    .join("friday-watch.pid");
+    let pidfile = friday_mobile::runtime_dir().join("friday-watch.pid");
     // The watch running now, if any (the pid file names a live process).
     let running = std::fs::read_to_string(&pidfile)
         .ok()
@@ -405,10 +402,7 @@ async fn routine(args: &[String]) -> std::process::ExitCode {
     };
     // `friday routine record`: Hyprland's events while you work, kept in the
     // runtime folder until `finish <name>` turns them into a routine.
-    let recording = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("friday-recording.txt");
+    let recording = friday_mobile::runtime_dir().join("friday-recording.txt");
     match args.first().map(String::as_str) {
         #[cfg(unix)]
         Some("record") => {
