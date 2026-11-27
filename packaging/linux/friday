@@ -5143,7 +5143,8 @@ always-allow|A harmless action (open an app, a link or a file; copy) can be allo
 mic-level|While FRIDAY listens, a thin bar in the answer card moves with your voice (red when the mic is muted)
 battery-model|On battery, a local model you picked for asks or chores gives way to a smaller one of its family you already have
 workspace-overview|Super+Tab shows every workspace with its windows; drag a window onto another to move it
-wallpaper-accent|A new wallpaper brings its own accent colour to FRIDAY Shell and the window borders (the background stays dark)"
+wallpaper-accent|A new wallpaper brings its own accent colour to FRIDAY Shell and the window borders (the background stays dark)
+screen-corners|The screen's corners are rounded, so the desktop and full-screen windows meet the edge in a curve"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
