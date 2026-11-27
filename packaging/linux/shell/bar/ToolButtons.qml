@@ -19,7 +19,7 @@ RowLayout {
     size: 24
     iconSize: 14
     onClicked: Quickshell.execDetached(["sh", "-c",
-      "g=$(slurp) || exit 0; grim -g \"$g\" - | wl-copy --type image/png && notify-send -a FRIDAY -i edit-copy 'Snip copied' 'Paste it anywhere.'"])
+      "for t in slurp grim wl-copy; do command -v $t >/dev/null || { notify-send -a FRIDAY 'Snip' \"It needs $t (sudo pacman -S slurp grim wl-clipboard).\"; exit 0; }; done; g=$(slurp) || exit 0; grim -g \"$g\" - | wl-copy --type image/png && notify-send -a FRIDAY -i edit-copy 'Snip copied' 'Paste it anywhere.'"])
   }
   IconButton {
     tooltip: "Pick a colour from the screen (its hex is copied)"
@@ -27,7 +27,7 @@ RowLayout {
     size: 24
     iconSize: 14
     onClicked: Quickshell.execDetached(["sh", "-c",
-      "command -v hyprpicker >/dev/null || { notify-send -a FRIDAY 'Colour picker' 'It needs hyprpicker (sudo pacman -S hyprpicker).'; exit 0; }; c=$(hyprpicker -a -n) && [ -n \"$c\" ] && notify-send -a FRIDAY 'Colour copied' \"$c\""])
+      "command -v hyprpicker >/dev/null || { notify-send -a FRIDAY 'Colour picker' 'It needs hyprpicker (sudo pacman -S hyprpicker).'; exit 0; }; c=$(hyprpicker -a -b) && [ -n \"$c\" ] && notify-send -a FRIDAY 'Colour copied' \"$c\""])
   }
   IconButton {
     visible: Audio.micReady
