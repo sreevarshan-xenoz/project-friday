@@ -303,12 +303,13 @@ internal sealed partial class SettingsWindow : FluentWindow
             pick.Click += (_, _) =>
             {
                 ChangeEnv(e => AppSettings.WithPalette(e, chosen), restart: false);
+                FluentApp.ApplyPalette(chosen);
                 Show("General");
             };
             colours.Children.Add(pick);
         }
         yield return colours;
-        yield return Note("New windows use it; restart the tray for the menu and icon colours.");
+        yield return Note("Windows you open from now on use it; restart the tray for the menu and icon colours.");
 
         // Features, each with its switch (all on to start). The daemon reads
         // its own (couldnt-check, agent-resume) when it starts, so those restart it.

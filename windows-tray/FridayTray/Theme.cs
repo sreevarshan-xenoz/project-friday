@@ -9,8 +9,7 @@ namespace FridayTray;
 /// </summary>
 internal static class Theme
 {
-    private static readonly PaletteColors Palette = AppSettings.PaletteColours(
-        AppSettings.PaletteName(EnvFile.Load(Paths.ForCurrentUser().EnvFile)));
+    private static readonly PaletteColors Palette = AppSettings.PaletteColours(Fluent.FluentApp.ChosenPalette());
 
     public static readonly Color Faint = ColorTranslator.FromHtml(Palette.Faint);
     public static readonly Color Accent = ColorTranslator.FromHtml(Palette.Accent);

@@ -21,14 +21,37 @@ internal static class FluentApp
         app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ThemesDictionary { Theme = ApplicationTheme.Dark });
         app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ControlsDictionary());
 
-        var env = EnvFile.Load(Paths.ForCurrentUser().EnvFile);
-        var palette = AppSettings.PaletteColours(AppSettings.PaletteName(env));
-        app.Resources.MergedDictionaries.Add(BuildPaletteDictionary(palette));
+        ApplyPalette(ChosenPalette());
+    }
 
-        app.Resources.MergedDictionaries.Add(new ResourceDictionary
+    /// <summary>The palette friday.env names (FRIDAY_PALETTE); Core when it
+    /// names none or can't be read.</summary>
+    public static string ChosenPalette()
+    {
+        try { return AppSettings.PaletteName(EnvFile.Load(Paths.ForCurrentUser().EnvFile)); }
+        catch (Exception) { return "core"; }
+    }
+
+    private static ResourceDictionary? _palette, _ember;
+
+    /// <summary>Puts a palette in place: its colours, then Ember.xaml's
+    /// brushes built from them. Windows opened after this use it; open ones
+    /// keep theirs (their brushes were looked up when they opened).</summary>
+    public static void ApplyPalette(string name)
+    {
+        var app = System.Windows.Application.Current;
+        if (app is null)
+            return;
+        var palette = AppSettings.PaletteColours(name);
+        if (_palette is not null) app.Resources.MergedDictionaries.Remove(_palette);
+        if (_ember is not null) app.Resources.MergedDictionaries.Remove(_ember);
+        _palette = BuildPaletteDictionary(palette);
+        app.Resources.MergedDictionaries.Add(_palette);
+        _ember = new ResourceDictionary
         {
             Source = new Uri("pack://application:,,,/friday-tray;component/Fluent/Ember.xaml"),
-        });
+        };
+        app.Resources.MergedDictionaries.Add(_ember);
         ApplicationAccentColorManager.Apply(ParseColor(palette.Accent), ApplicationTheme.Dark);
     }
 
