@@ -473,9 +473,15 @@ const FOLDER_TEXT: &[&str] = &["md", "txt", "org", "rst", "adoc", "tex"];
 /// Office and e-book files read as their text through anydoc.
 pub const DOC_KINDS: &[&str] = &["docx", "pptx", "xlsx", "odt", "odp", "ods", "rtf", "epub"];
 
-/// A document's text as Markdown (anydoc), at most `max` bytes; None when
-/// it can't be read or has no text.
+/// The largest document read (anydoc reads the whole file into memory).
+const DOC_FILE_MAX: u64 = 50_000_000;
+
+/// A document's text as Markdown (anydoc), at most `max` characters; None
+/// when it can't be read, has no text, or is over 50 MB.
 pub fn doc_text(path: &std::path::Path, max: usize) -> Option<String> {
+    if std::fs::metadata(path).ok()?.len() > DOC_FILE_MAX {
+        return None;
+    }
     let md = anydoc::to_markdown(path).ok()?;
     let md = md.trim();
     if md.is_empty() {

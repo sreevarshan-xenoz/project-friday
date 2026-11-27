@@ -1697,10 +1697,10 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("watch") {
         return watch(&raw[1..]);
     }
-    // `friday-ctl doc-text <file> [max-bytes]`: a document's text, for asks.
+    // `friday-ctl doc-text <file> [max-chars]`: a document's text, for asks.
     if raw.first().map(String::as_str) == Some("doc-text") {
         let Some(path) = raw.get(1) else {
-            eprintln!("usage: friday-ctl doc-text <file> [max-bytes]");
+            eprintln!("usage: friday-ctl doc-text <file> [max-chars]");
             return std::process::ExitCode::from(2);
         };
         let max = raw.get(2).and_then(|m| m.parse().ok()).unwrap_or(8000);

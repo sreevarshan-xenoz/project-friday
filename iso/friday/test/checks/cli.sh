@@ -395,7 +395,8 @@ printf 'PK\003\004 not real' >"$W/mention/plan.docx"
 contains "@file reads a Word document through friday-ctl doc-text" "$(cat "$LOG")" "third of March"
 cp "$W/mention/plan.docx" "$W/mention/broken.docx"
 : >"$LOG"; bash "$F" ask "what's in @file $W/mention/broken.docx"; sleep 0.3
-if grep -q "third of March" "$LOG"; then fail "@file sent text from a document it couldn't read"; else pass "@file says when a document has no text it can read"; fi
+if grep -q "third of March" "$LOG"; then fail "@file sent text from a document it couldn't read"; else pass "@file sends nothing from a document it couldn't read"; fi
+contains "@file says the document has no text it can read" "$(cat "$LOG")" "no text I can read"
 mkdir -p "$HOME/.config/friday"; cp "$HOME/.config/friday/private-windows" "$W/pw.mention" 2>/dev/null || : >"$W/pw.mention"
 printf '%s\n' "$W/mention" >>"$HOME/.config/friday/private-windows"
 : >"$LOG"; bash "$F" ask "what's wrong in @file $W/mention/main.rs"; sleep 0.3
