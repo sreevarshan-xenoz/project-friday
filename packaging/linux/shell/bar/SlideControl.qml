@@ -26,10 +26,12 @@ Item {
 
   HoverHandler { id: hover }
   WheelHandler {
-    // Up a step or down one; a sideways scroll changes nothing.
+    // 5% per wheel notch (120); a touchpad's small, many deltas add up to
+    // the same, rather than 5% each. A sideways scroll changes nothing.
     onWheel: e => {
-      if (e.angleDelta.y !== 0)
-        root.moved(Math.max(0, Math.min(1, root.value + (e.angleDelta.y > 0 ? 0.05 : -0.05))));
+      const d = e.angleDelta.y !== 0 ? e.angleDelta.y / 120 : e.pixelDelta.y / 120;
+      if (d !== 0)
+        root.moved(Math.max(0, Math.min(1, root.value + 0.05 * d)));
     }
   }
 
