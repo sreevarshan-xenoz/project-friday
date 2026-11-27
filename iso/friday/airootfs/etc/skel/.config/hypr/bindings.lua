@@ -124,10 +124,12 @@ o.bind("SUPER + mouse:275", "Scratchpad", hl.dsp.workspace.toggle_special("speci
 o.bind("SUPER + ALT + S", "Send window to the scratchpad", hl.dsp.window.move({ workspace = "special:special", follow = false }))
 
 -- Touchpad: 3 fingers swipe moves the window, pinch goes full screen;
--- 4 fingers sideways switches workspace.
+-- 4 fingers sideways switches workspace, up shows the overview, down closes it.
 hl.gesture({ fingers = 3, direction = "swipe", action = "move" })
 hl.gesture({ fingers = 3, direction = "pinch", action = "fullscreen" })
 hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" })
+hl.gesture({ fingers = 4, direction = "up", action = function() hl.dispatch(hl.dsp.exec_cmd("friday shell overview")) end })
+hl.gesture({ fingers = 4, direction = "down", action = function() hl.dispatch(hl.dsp.exec_cmd("friday shell ipc overview close")) end })
 hl.config({
   gestures = {
     workspace_swipe_distance = 700,
