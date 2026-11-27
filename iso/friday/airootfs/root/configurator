@@ -414,11 +414,12 @@ step_look() {
     echo
     friday_head "Style"
     friday_note "  Where the bar sits and its shape; windows' gaps and corners follow it."
-    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=6 --selected="$SHELL_STYLE" \
+    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=7 --selected="$SHELL_STYLE" \
       "Lean (thin borders, small gaps, no blur; the FRIDAY OS look)" \
       "Ember (bar flush with the top edge)" \
       "Island (floating pills along the top)" \
-      "Dock (floating bar along the bottom)") && SHELL_STYLE="$v"
+      "Dock (floating bar along the bottom)" \
+      "Rail (a slim column down the left edge)") && SHELL_STYLE="$v"
     friday_ok "$SHELL_STYLE"
   fi
   echo
