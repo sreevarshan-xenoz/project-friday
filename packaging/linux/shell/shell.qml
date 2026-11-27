@@ -32,7 +32,9 @@ ShellRoot {
       id: perScreen
       required property ShellScreen modelData
       DesktopWidgets { modelData: perScreen.modelData }
-      Bar { modelData: perScreen.modelData }
+      // The top bar, or the rail down the left edge (style "rail").
+      LazyLoader { active: !Theme.rail; Bar { modelData: perScreen.modelData } }
+      LazyLoader { active: Theme.rail; RailBar { modelData: perScreen.modelData } }
       DrawerHost { modelData: perScreen.modelData }
       Popups { modelData: perScreen.modelData }
       AnswerPill { modelData: perScreen.modelData }

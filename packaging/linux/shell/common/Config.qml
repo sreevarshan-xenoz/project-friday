@@ -12,7 +12,8 @@ import Quickshell.Io
 //     "style": "ember",         // "ember" (bar flush with the top edge),
 //                               // "lean" (the same bar; thin borders, small
 //                               // gaps, no blur), "island" (three floating
-//                               // pills) or "dock" (a floating bar at the bottom)
+//                               // pills), "dock" (a floating bar at the bottom)
+//                               // or "rail" (a slim column down the left edge)
 //     "palette": "core",        // FRIDAY's own: "core" (the logo's obsidian
 //                               // and red), "ember", "polar", "frost", "moss",
 //                               // "dawn" (light); or "classic" (follow the
@@ -40,7 +41,7 @@ Singleton {
   property var featuresOff: []
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
-  readonly property var styles: ["ember", "lean", "island", "dock"]
+  readonly property var styles: ["ember", "lean", "island", "dock", "rail"]
   readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "contrast", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
   readonly property string palette: pick("palette", "core") === "friday" ? "ember" : pick("palette", "core") === "omarchy" ? "classic" : pick("palette", "core")

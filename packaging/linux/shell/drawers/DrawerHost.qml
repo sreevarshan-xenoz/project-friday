@@ -57,7 +57,8 @@ PanelWindow {
   onVisibleChanged: if (!visible) shown = ""
 
   anchors { top: true; left: true; right: true; bottom: true }
-  margins.top: Theme.barAtBottom ? 0 : Theme.floating ? Theme.barReach + Theme.gap : Theme.barHeight
+  margins.top: Theme.rail ? Theme.gap : Theme.barAtBottom ? 0 : Theme.floating ? Theme.barReach + Theme.gap : Theme.barHeight
+  margins.left: Theme.leftReach
   margins.bottom: Theme.barAtBottom ? Theme.barReach + Theme.gap : 0
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
@@ -88,7 +89,7 @@ PanelWindow {
     Behavior on x { enabled: host.switching; NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
 
     // Ember: room for the shoulders either side. Floating: just the card.
-    readonly property real shoulder: Theme.floating ? 0 : Theme.fillet
+    readonly property real shoulder: Theme.floating || Theme.rail ? 0 : Theme.fillet
 
     width: bodyW + 2 * shoulder
     height: bodyH * host.reveal
@@ -97,17 +98,19 @@ PanelWindow {
     // Ember: at a screen edge the outer shoulder is pushed off-screen, so the
     // body runs flush with the edge under the bar's own corner. Floating: the
     // card keeps the bar's inset from the edge.
-    x: host.spec.align === "left" ? (Theme.floating ? Theme.barInset : -Theme.fillet)
+    // The rail: every drawer opens beside it, at the top.
+    x: Theme.rail ? Theme.gap
+      : host.spec.align === "left" ? (Theme.floating ? Theme.barInset : -Theme.fillet)
       : host.spec.align === "right" ? host.width - width - (Theme.floating ? Theme.barInset : -Theme.fillet)
       : Math.round((host.width - width) / 2)
 
     // Swallow clicks on the body so they don't reach the close handler.
     MouseArea { anchors.fill: parent }
 
-    DrawerShape { anchors.fill: parent; visible: !Theme.floating }
+    DrawerShape { anchors.fill: parent; visible: !Theme.floating && !Theme.rail }
     Rectangle {
       anchors.fill: parent
-      visible: Theme.floating
+      visible: Theme.floating || Theme.rail
       radius: Math.min(Theme.radius, height / 2)
       color: Theme.glass
       border.width: 1

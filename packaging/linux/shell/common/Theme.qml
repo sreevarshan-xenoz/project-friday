@@ -27,6 +27,7 @@ import Quickshell.Io
 //           no blur (FRIDAY OS's default)
 //   island  three floating pills along the top; drawers are floating cards
 //   dock    one floating bar along the bottom; drawers rise from it
+//   rail    one slim column down the left edge; drawers open beside it
 Singleton {
   id: root
 
@@ -226,11 +227,16 @@ Singleton {
 
   // Style. `floating` styles keep the bar off the screen edge by `barInset`.
   readonly property string style: Config.style
-  readonly property bool floating: style !== "ember" && style !== "lean"
+  readonly property bool floating: style === "island" || style === "dock"
+  // The rail: a column down the left edge instead of a bar along the top.
+  readonly property bool rail: style === "rail"
+  readonly property int railWidth: 46
+  // How far from the left edge windows and desktop things start.
+  readonly property int leftReach: rail ? railWidth : 0
   readonly property bool barAtBottom: style === "dock"
   readonly property int barInset: floating ? 10 : 0
   // How far from its screen edge the bar's far side is (windows start there).
-  readonly property int barReach: barHeight + barInset
+  readonly property int barReach: rail ? 0 : barHeight + barInset
 
   // Geometry. In the ember style the bar is flush with the top edge and
   // flows into the screen through two concave corners; drawers grow out of

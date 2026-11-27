@@ -16,6 +16,8 @@ Item {
   id: root
 
   required property ShellScreen screen
+  // Stacked top to bottom (the rail style).
+  property bool vertical: false
   readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
 
   // Not Hyprland: the compositor's workspaces for this screen, as it orders them.
@@ -44,8 +46,8 @@ Item {
   }
 
   visible: hyprland || wsets.length > 0
-  implicitWidth: row.implicitWidth + 16
-  implicitHeight: 24
+  implicitWidth: vertical ? 24 : row.implicitWidth + 16
+  implicitHeight: vertical ? row.implicitHeight + 16 : 24
 
   function go(target) {
     Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ workspace = \"" + target + "\" })"]);
@@ -65,10 +67,14 @@ Item {
     color: Theme.surface
   }
 
-  RowLayout {
+  GridLayout {
     id: row
     anchors.centerIn: parent
-    spacing: 5
+    flow: root.vertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+    rows: root.vertical ? -1 : 1
+    columns: root.vertical ? 1 : -1
+    rowSpacing: 5
+    columnSpacing: 5
 
     Repeater {
       model: root.hyprland ? root.slots : root.wsets.length
@@ -81,9 +87,10 @@ Item {
         // The compositor lists only workspaces that exist, so all are in use.
         readonly property bool used: root.hyprland ? root.occupied[wsId] === true : true
 
-        implicitWidth: active ? 22 : 8
-        implicitHeight: 8
+        implicitWidth: root.vertical ? 8 : active ? 22 : 8
+        implicitHeight: root.vertical ? (active ? 22 : 8) : 8
         Behavior on implicitWidth { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+        Behavior on implicitHeight { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
 
         Rectangle {
           anchors.fill: parent

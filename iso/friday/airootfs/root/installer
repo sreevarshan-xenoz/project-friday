@@ -819,6 +819,7 @@ else
     Island*) SHELL_STYLE_ID=island ;;
     Dock*)   SHELL_STYLE_ID=dock ;;
     Lean*)   SHELL_STYLE_ID=lean ;;
+    Rail*) SHELL_STYLE_ID=rail ;;
     *)       SHELL_STYLE_ID=ember ;;
   esac
   jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" \
