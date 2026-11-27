@@ -39,8 +39,9 @@ PanelWindow {
   readonly property bool streaming: Answer.state === "working" && Answer.body !== ""
   readonly property real maxBody: implicitHeight - 150
 
-  // The size it is heading for; `morph` animates there, springing when it
-  // grows and easing out quickly when it shrinks.
+  // The size it is heading for; `morph` animates there. Only the first
+  // opening springs; while text streams in it follows quickly and plainly,
+  // so the card doesn't bounce on every new line.
   readonly property real targetW: !Answer.visible ? 300 : answering ? 640 : streaming ? 560 : 380
   readonly property real targetH: !Answer.visible ? 0 : content.implicitHeight + 2 * 14
   onTargetWChanged: morph(widthAnim, card.width, targetW)
@@ -50,9 +51,10 @@ PanelWindow {
     anim.stop();
     anim.from = from;
     anim.to = to;
-    anim.easing.type = to > from ? Easing.OutBack : Easing.OutQuart;
-    anim.easing.overshoot = 1.15;
-    anim.duration = to > from ? Theme.slow : Theme.medium;
+    const opening = from < 2 && to > from;
+    anim.easing.type = opening ? Theme.spring : to > from ? Theme.easing : Easing.OutQuart;
+    anim.easing.overshoot = 1.1;
+    anim.duration = opening ? Theme.slow : win.streaming ? Theme.fast : Theme.medium;
     anim.start();
   }
 

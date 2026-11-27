@@ -20,16 +20,27 @@ PanelWindow {
   // Which drawer this screen shows; `shown` lingers while it rolls back up.
   readonly property string current: Shell.screen === modelData.name ? Shell.drawer : ""
   property string shown: ""
-  onCurrentChanged: if (current !== "") shown = current
+  // From one open drawer straight to another: the body slides and resizes
+  // to the new one while its content cross-fades, instead of jumping.
+  property bool switching: false
+  onCurrentChanged: {
+    if (current !== "" && shown !== "" && shown !== current && reveal > 0.99) {
+      switching = true;
+      settle.restart();
+      swapFade.restart();
+    }
+    if (current !== "") shown = current;
+  }
+  Timer { id: settle; interval: Theme.medium + 40; onTriggered: host.switching = false }
+  property real swap: 1
+  NumberAnimation { id: swapFade; target: host; property: "swap"; from: 0; to: 1; duration: Theme.medium; easing.type: Theme.easing }
 
   property real reveal: current !== "" ? 1 : 0
-  // Opens with a little spring, closes on the plain curve (a spring there
-  // would dip below zero).
+  // Quick and plain both ways: no overshoot on something opened this often.
   Behavior on reveal {
     NumberAnimation {
-      duration: host.current !== "" ? Theme.slow : Theme.medium
-      easing.type: host.current !== "" ? Theme.spring : Theme.easing
-      easing.overshoot: 1.1
+      duration: host.current !== "" ? Theme.medium : Theme.fast + 40
+      easing.type: Theme.easing
     }
   }
 
@@ -67,8 +78,14 @@ PanelWindow {
   Item {
     id: drawer
 
-    readonly property real bodyW: loader.item ? loader.item.implicitWidth + 2 * Theme.pad : 0
-    readonly property real bodyH: loader.item ? loader.item.implicitHeight + 2 * Theme.pad : 0
+    readonly property real fullW: loader.item ? loader.item.implicitWidth + 2 * Theme.pad : 0
+    readonly property real fullH: loader.item ? loader.item.implicitHeight + 2 * Theme.pad : 0
+    // Follow the drawer's size; eased only while switching drawers.
+    property real bodyW: fullW
+    property real bodyH: fullH
+    Behavior on bodyW { enabled: host.switching; NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+    Behavior on bodyH { enabled: host.switching; NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
+    Behavior on x { enabled: host.switching; NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
 
     // Ember: room for the shoulders either side. Floating: just the card.
     readonly property real shoulder: Theme.floating ? 0 : Theme.fillet
@@ -103,7 +120,7 @@ PanelWindow {
       y: Theme.pad - (1 - host.reveal) * (Theme.barAtBottom ? -12 : 12)
       width: drawer.bodyW - 2 * Theme.pad
       height: drawer.bodyH - 2 * Theme.pad
-      opacity: Math.max(0, (host.reveal - 0.35) / 0.65)
+      opacity: Math.max(0, (host.reveal - 0.35) / 0.65) * host.swap
       clip: true
 
       Loader {
