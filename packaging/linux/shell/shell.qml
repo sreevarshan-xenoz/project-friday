@@ -49,6 +49,7 @@ ShellRoot {
       Overview { modelData: perScreen.modelData }
       WallpaperPicker { modelData: perScreen.modelData }
       ScreenCorners { modelData: perScreen.modelData }
+      WallpaperFade { modelData: perScreen.modelData }
     }
   }
 
