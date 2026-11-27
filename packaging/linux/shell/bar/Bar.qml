@@ -142,6 +142,7 @@ PanelWindow {
     }
     spacing: 12
 
+    ToolButtons {}
     ResourcesChip {}
     Tray {}
     MediaChip {}

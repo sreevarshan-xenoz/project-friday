@@ -5136,6 +5136,7 @@ voice-try|friday voice speak try [N]: hear a voice, or each in turn, before choo
 state-sounds|With friday sounds on: quiet cues for listening, an answer done and one that failed
 obscura-reader|With friday obscura installed, web pages are read by it (about 30 MB) before FRIDAY's headless Chrome
 bar-resources|FRIDAY Shell's bar shows how much CPU and memory are in use (warning colour when either runs hot)
+bar-tools|FRIDAY Shell's bar has small tools: snip a part of the screen, pick a colour (hex copied), mute the microphone
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all

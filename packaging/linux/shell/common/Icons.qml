@@ -23,6 +23,8 @@ Singleton {
   readonly property string volumeOff: "\u{f0581}"
   readonly property string mic: "\u{f036c}"
   readonly property string micOff: "\u{f036d}"
+  readonly property string snip: "\u{f019e}"
+  readonly property string colourPick: "\u{f020b}"
   readonly property string battery: "\u{f0079}"
   readonly property string batteryHalf: "\u{f007e}"
   readonly property string batteryLow: "\u{f007b}"
