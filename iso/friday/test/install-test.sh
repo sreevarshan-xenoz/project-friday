@@ -126,10 +126,11 @@ if [[ -n "$ALONGSIDE" ]]; then
     efibootmgr | sed -n "s/^BootOrder: //p" >/root/order-before.txt'
   DISK_MODE="INSTALL_MODE=alongside ALONGSIDE_DISK=/dev/vda FRIDAY_SIZE_MB=40960 BOOT_DEFAULT=other"
 fi
+# INSTALL_ENV adds settings, e.g. INSTALL_ENV="EDITORS=zed AGENTS='opencode cline'".
 # Through env: the live shell is zsh, where USERNAME (and HOSTNAME in bash) are
 # special parameters that a plain prefix assignment doesn't pass on.
 if ! vm root "env TERM=xterm TARGET_DISK=/dev/vda $DISK_MODE FRIDAY_HOSTNAME=friday USERNAME=friday PASSWORD=$PASS_WORD \
-      AUTOLOGIN=true ENCRYPT=false FRIDAY_DEBUG_ACCESS=true AUTO_REBOOT=false FRIDAY_FAST=1 \
+      AUTOLOGIN=true ENCRYPT=false FRIDAY_DEBUG_ACCESS=true AUTO_REBOOT=false FRIDAY_FAST=1 ${INSTALL_ENV:-} \
       timeout 3000 /root/installer" >"$OUT/installer.log" 2>&1; then
   log "the installer failed; last lines:"; tail -n 30 "$OUT/installer.log" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
   log "its log (/tmp/friday-installer.log):"

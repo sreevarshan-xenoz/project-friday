@@ -519,20 +519,20 @@ friday_browsers_label() {
 # list starts with "All of these"; the agents picked are offered to FRIDAY at
 # first login (friday connect), so it can answer through them.
 FRIDAY_EDITORS=(
-  "vscode|VS Code (Microsoft's build, from the AUR)"
+  "vscode|VS Code (Microsoft's build from the AUR)"
   "code|Code - OSS (VS Code's open-source build)"
   "zed|Zed"
   "neovim|Neovim"
   "cursor|Cursor (from the AUR)"
 )
 FRIDAY_AGENTS=(
-  "opencode|OpenCode (free models, no account needed)"
+  "opencode|OpenCode (free models with no account needed)"
   "claude|Claude Code (your Anthropic account)"
   "codex|Codex (your OpenAI / ChatGPT account)"
   "gemini|Gemini CLI (your Google account)"
-  "agy|Antigravity CLI, agy (your Google account)"
-  "cline|Cline (your Cline account, incl. free models)"
-  "kilo|Kilo (free models, or your Kilo account)"
+  "agy|Antigravity CLI: agy (your Google account)"
+  "cline|Cline (your Cline account or its free models)"
+  "kilo|Kilo (free models or your Kilo account)"
 )
 
 # friday_pick_many <current ids> <id|label>...: a gum list with "All of these"
