@@ -73,14 +73,25 @@ Singleton {
 
   readonly property var current: obj(parsed.current)
   readonly property bool working: running && current !== null && current.active === true
-  readonly property string goal: current ? str(current.goal) : ""
+  // The question alone: the daemon's goal also carries what went with it
+  // ("\n\n[docs]\n…", "\n\nUse this text as context:" and the selection).
+  // The same cut as the daemon's goal_segment (goal-execution planning.rs).
+  function question(g) {
+    let end = g.length;
+    for (const m of ["\n\n[", "\n\nUse this text as context:", "\r\n\r\n[", "\r\n\r\nUse this text as context:"]) {
+      const i = g.indexOf(m);
+      if (i >= 0 && i < end) end = i;
+    }
+    return g.slice(0, end).trim();
+  }
+  readonly property string goal: current ? question(str(current.goal)) : ""
   readonly property string phase: current ? str(current.phase) : ""
   // The answer so far while it streams (state.json current.partial).
   readonly property string partial: working ? str(current.partial) : ""
   readonly property int phaseIndex: phases.indexOf(phase)
 
   readonly property var last: obj(parsed.last_goal)
-  readonly property string lastGoal: last ? str(last.goal) : ""
+  readonly property string lastGoal: last ? question(str(last.goal)) : ""
   readonly property string lastOutcome: last ? str(last.outcome) : ""
   readonly property string lastDetail: last ? str(last.result || last.error || last.failed_reason) : ""
   readonly property bool lastFailed: /fail|error|abort|cancel/i.test(lastOutcome)
