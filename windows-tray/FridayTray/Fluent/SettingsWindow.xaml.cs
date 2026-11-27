@@ -290,6 +290,26 @@ internal sealed partial class SettingsWindow : FluentWindow
             (Elevation.IsElevated() ? "FRIDAY is running as administrator now." : "Takes effect the next time FRIDAY starts."),
             admin,
             SetAdministrator);
+
+        yield return Caption("Colours");
+        var palette = AppSettings.PaletteName(EnvFile.Load(_install.Paths.EnvFile));
+        var colours = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var p in AppSettings.Palettes)
+        {
+            var label = char.ToUpperInvariant(p[0]) + p[1..];
+            var pick = Pill(label, primary: p == palette);
+            pick.Margin = new Thickness(0, 0, 8, 0);
+            var chosen = p;
+            pick.Click += (_, _) =>
+            {
+                ChangeEnv(e => AppSettings.WithPalette(e, chosen), restart: false);
+                Show("General");
+            };
+            colours.Children.Add(pick);
+        }
+        yield return colours;
+        yield return Note("New windows use it; restart the tray for the menu and icon colours.");
+
         // Features, each with its switch (all on to start). The daemon reads
         // its own (couldnt-check, agent-resume) when it starts, so those restart it.
         yield return Caption("Features");
@@ -1351,6 +1371,17 @@ internal sealed partial class SettingsWindow : FluentWindow
         content.Children.Add(new SymbolIcon { Symbol = icon, FontSize = 14, Margin = new Thickness(0, 0, 7, 0), VerticalAlignment = VerticalAlignment.Center });
         content.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
         var b = new Button { Content = content, Style = (Style)FindResource(primary ? "PrimaryPill" : "Pill") };
+        AutomationProperties.SetName(b, text);
+        return b;
+    }
+
+    private Button Pill(string text, bool primary = false)
+    {
+        var b = new Button
+        {
+            Content = new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center },
+            Style = (Style)FindResource(primary ? "PrimaryPill" : "Pill"),
+        };
         AutomationProperties.SetName(b, text);
         return b;
     }
