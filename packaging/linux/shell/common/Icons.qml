@@ -9,6 +9,7 @@ import Quickshell
 Singleton {
   readonly property string search: "\u{f0349}"
   readonly property string apps: "\u{f003b}"
+  readonly property string cpu: "\u{f0ee0}"
   readonly property string wifi: "\u{f0928}"
   readonly property string wifiWeak: "\u{f0922}"
   readonly property string wifiOff: "\u{f05aa}"
