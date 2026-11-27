@@ -86,15 +86,20 @@ PanelWindow {
       active: Shell.isOpen("launcher", bar.modelData.name)
       onClicked: Shell.toggle("launcher", bar.modelData.name)
     }
-    Workspaces { screen: bar.modelData }
-    WindowTitle { Layout.maximumWidth: Math.max(0, bar.width / 2 - centre.width / 2 - 260) }
+    Workspaces { id: workspaces; screen: bar.modelData }
+    WindowTitle { Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
   }
 
   // Centre: the orb (FRIDAY drawer) and what it's doing, then the clock
-  // (calendar drawer).
+  // (calendar drawer). The clock stays at the bar's centre, right above the
+  // calendar drawer; what FRIDAY is doing grows to its left.
   RowLayout {
     id: centre
-    anchors.centerIn: strip
+    anchors.verticalCenter: strip.verticalCenter
+    // ...but never over the apps button and workspaces on a narrow screen:
+    // there the clock gives way to the right instead.
+    x: Math.round(Math.max(leftGroup.x + workspaces.x + workspaces.width + 24,
+      strip.x + strip.width / 2 - clock.implicitWidth / 2 - fridayButton.implicitWidth - spacing))
     spacing: 12
 
     Rectangle {
