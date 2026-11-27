@@ -5071,6 +5071,7 @@ memory-tidy|When memory is fuller than an ask carries, friday memory tidy propos
 activity|One list of agent steps waiting for you, runs going now, standing tasks and runs finished lately
 model-per-job|friday model: a model picked for asks, screen questions or chores is tried first
 status-orb|The answer pill's orb shows listening, thinking and speaking
+desktop-widgets|Clock, FRIDAY, computer and music widgets on the desktop; drag them where you like
 screen-ocr|A window with no text of its own is asked about with its words read off the screen here, not its picture
 usage-page|friday usage: calls, failures, free-limit hits and speed per AI provider
 memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a date in memory.md
