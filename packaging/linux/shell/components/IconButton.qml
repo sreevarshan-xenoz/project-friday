@@ -60,9 +60,11 @@ Item {
     active: root.tipShown && root.visible
     sourceComponent: PopupWindow {
       anchor.item: root
-      anchor.edges: Theme.barAtBottom ? Edges.Top : Edges.Bottom
-      anchor.gravity: Theme.barAtBottom ? Edges.Top : Edges.Bottom
-      anchor.margins.top: Theme.barAtBottom ? 0 : 6
+      // Beside the rail, not over the buttons below it.
+      anchor.edges: Theme.rail ? Edges.Right : Theme.barAtBottom ? Edges.Top : Edges.Bottom
+      anchor.gravity: Theme.rail ? Edges.Right : Theme.barAtBottom ? Edges.Top : Edges.Bottom
+      anchor.margins.left: Theme.rail ? 8 : 0
+      anchor.margins.top: Theme.barAtBottom || Theme.rail ? 0 : 6
       anchor.margins.bottom: Theme.barAtBottom ? 6 : 0
       implicitWidth: tipText.implicitWidth + 20
       implicitHeight: tipText.implicitHeight + 10

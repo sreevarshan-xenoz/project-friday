@@ -23,7 +23,7 @@ Rectangle {
   readonly property bool charging: hasBattery && battery.state === UPowerDeviceState.Charging
   readonly property int pct: hasBattery ? Math.round(battery.percentage * 100) : 0
 
-  implicitWidth: vertical ? 28 : row.implicitWidth + 22
+  implicitWidth: vertical ? Math.max(28, row.implicitWidth + 8) : row.implicitWidth + 22
   implicitHeight: vertical ? row.implicitHeight + 20 : 24
   radius: height / 2
   color: mouse.containsMouse ? Theme.raised : Theme.surface
