@@ -146,6 +146,7 @@ Autonomous Agent & Cognitive Loop:
   friday screen-text [status|on|off]
   friday feature [list|<name> on|off]  Switch one of FRIDAY's features off or on again
   friday autonomy [ask-all|ask-risky|act]  How much FRIDAY may do without asking
+  friday always-allow [list|clear|forget <n>]  Harmless actions you said to always allow (30 days each)
                                    Ask about the screen with the window's text, not a screenshot
   friday phone [status|on|off|send [thread]] Pair a phone with FRIDAY Mobile; send it the last answer or this conversation
   friday phone devices|unpair <phone>  The paired phones, last heard from; cut one off
@@ -1782,7 +1783,7 @@ friday_chime() {
 }
 friday_confirm_pending() { echo "${XDG_STATE_HOME:-$HOME/.local/state}/friday/confirm-pending"; }
 friday_confirm() {
-  local action="$1" nid="${2:-}" preview="${3:-}" t desk_pid phone_pid="" got="" pending
+  local action="$1" nid="${2:-}" preview="${3:-}" quoted="${4:-true}" t desk_pid phone_pid="" got="" pending
   t=$(mktemp -d) || return 1
   pending=$(friday_confirm_pending)
   # Its wait folder, the action, and who waits (a typed answer counts only
@@ -1791,6 +1792,10 @@ friday_confirm() {
   (umask 077; mkdir -p "$(dirname "$pending")"; printf '%s\n%s\n%s\n' "$t" "$action" "$me" >"$pending")
   trap '[ "$(head -n1 "'"$pending"'" 2>/dev/null)" != "'"$t"'" ] || rm -f "'"$pending"'"; rm -rf "'"$t"'"' EXIT
   local acts=(-A run="Run" -A cancel="Cancel") also="(or say yes in the ask box)" voice_pid=""
+  # A harmless action asked plainly can be allowed for good (30 days).
+  if [ "$quoted" != true ] && friday_feature_on always-allow && friday_harmless_action "$action"; then
+    acts=(-A run="Run" -A always="Always allow" -A cancel="Cancel")
+  fi
   [ -z "$nid" ] || acts+=(-r "$nid")
   # Asked by voice: after a chime, a spoken "run" or "cancel" answers too,
   # heard while this is on screen only. Something that can't be undone can
@@ -1829,14 +1834,14 @@ friday_confirm() {
   fi
   local alive
   while :; do
-    got=$(cat "$t/typed" "$t/desk" "$t/phone" "$t/voice" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+    got=$(cat "$t/typed" "$t/desk" "$t/phone" "$t/voice" 2>/dev/null | grep -m1 -xE 'run|cancel|always' || true)
     [ -z "$got" ] || break
     alive=false
     kill -0 "$desk_pid" 2>/dev/null && alive=true
     [ -z "$phone_pid" ] || ! kill -0 "$phone_pid" 2>/dev/null || alive=true
     if ! $alive; then
       # Both are done: read once more, an answer may have landed just now.
-      got=$(cat "$t/typed" "$t/desk" "$t/phone" "$t/voice" 2>/dev/null | grep -m1 -xE 'run|cancel' || true)
+      got=$(cat "$t/typed" "$t/desk" "$t/phone" "$t/voice" 2>/dev/null | grep -m1 -xE 'run|cancel|always' || true)
       break
     fi
     sleep 0.3
@@ -1846,6 +1851,7 @@ friday_confirm() {
   kill "$desk_pid" ${phone_pid:+"$phone_pid"} ${voice_pid:+"$voice_pid"} 2>/dev/null || true
   [ "$(head -n1 "$pending" 2>/dev/null)" != "$t" ] || rm -f "$pending"
   rm -rf "$t"
+  if [ "$got" = always ]; then friday_always_remember "$action"; got=run; fi
   printf '%s\n' "${got:-cancel}"
 }
 
@@ -5060,7 +5066,8 @@ memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a da
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
 call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone
 action-check|Before a risky action, say what will change; after it, check and say done, partly or failed
-clipboard-clear|A password or key left on the clipboard is cleared after 2 minutes, with clips on or off"
+clipboard-clear|A password or key left on the clipboard is cleared after 2 minutes, with clips on or off
+always-allow|A harmless action (open an app, a link or a file; copy) can be allowed for good, per exact action, for 30 days"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
@@ -5151,6 +5158,88 @@ friday_irreversible() {
   # Only outside quotes: a commit message that says "rmdir" is no rmdir.
   a=$(sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g" <<<"$a")
   [[ "$a" =~ $first ]] || [[ "$a" =~ $other ]]
+}
+
+# PRV-11: whether an action is harmless enough to "Always allow": opening
+# an app, a web link or a file, or copying text. One plain argument at most
+# (no shell syntax: the action runs through a shell), a link that is
+# http(s), a file that exists and isn't a program, an app that has a
+# desktop entry. Anything else is asked about every time.
+friday_harmless_action() {
+  local a=$1 verb arg rest f
+  [[ "$a" == *$'\n'* ]] && return 1
+  friday_irreversible "$a" && return 1
+  read -r verb arg rest <<<"$a"
+  case "$verb" in
+    xdg-open|gio|gtk-launch|kde-open|wl-copy) ;;
+    *)
+      # An app by its own name, nothing after it, with a desktop entry.
+      [ -z "$arg" ] && [[ "$verb" =~ ^[a-z0-9][a-z0-9._+-]*$ ]] || return 1
+      # (The program's own name: Exec=/usr/lib/firefox/firefox %u is firefox.)
+      local w
+      while read -r w; do
+        [ "${w##*/}" = "$verb" ] && return 0
+      done < <(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "${XDG_DATA_HOME:-$HOME/.local/share}"/applications/*.desktop /usr/share/applications/*.desktop 2>/dev/null)
+      return 1 ;;
+  esac
+  if [ "$verb" = gio ]; then [ "$arg" = open ] || return 1; read -r _ _ arg rest <<<"$a"; fi
+  # Copying: plain words only.
+  if [ "$verb" = wl-copy ]; then
+    case "${a#wl-copy}" in *[\"\'\`\$\;\|\&\<\>\(\)\{\}\\\*\?\~\!\#]*) return 1 ;; esac
+    [[ "$arg" != -* ]]
+    return
+  fi
+  [ -n "$arg" ] && [ -z "$rest" ] || return 1
+  # The action runs through a shell: one word, or one quoted string with
+  # nothing the shell would expand inside it.
+  if [[ "$arg" =~ ^\'([^\']*)\'$ ]]; then arg=${BASH_REMATCH[1]}
+  elif [[ "$arg" =~ ^\"([^\"\$\`\\]*)\"$ ]]; then arg=${BASH_REMATCH[1]}
+  else case "$arg" in *[\"\'\`\$\;\|\&\<\>\(\)\{\}\\]*) return 1 ;; esac; fi
+  if [ "$verb" = gtk-launch ]; then [[ "$arg" =~ ^[A-Za-z0-9._-]+$ ]]; return; fi
+  [[ "$arg" =~ ^https?://[^[:space:]]+$ ]] && return 0
+  f="${arg/#\~/$HOME}"; f="${f#file://}"
+  [ -f "$f" ] && [ ! -x "$f" ] && [[ "$f" != *.desktop ]]
+}
+
+# "Always allow" (PRV-11; switch always-allow): exact actions, each kept 30
+# days, run without asking while they stay harmless and the ask carries no
+# quoted text. `friday always-allow [list|clear|forget <n>]`.
+friday_always_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/always-allow"; }
+friday_always_allowed() {
+  local a=$1 now ts act
+  friday_feature_on always-allow && friday_harmless_action "$a" || return 1
+  now=$(date +%s)
+  while IFS=$'\t' read -r ts act; do
+    [[ "$ts" =~ ^[0-9]+$ ]] && [ "$act" = "$a" ] && [ $(( now - ts )) -lt 2592000 ] && return 0
+  done <"$(friday_always_file)" 2>/dev/null
+  return 1
+}
+friday_always_remember() {
+  local f; f=$(friday_always_file)
+  mkdir -p "$(dirname "$f")"
+  (umask 077
+   { awk -F'\t' -v a="$1" '$2 != a' "$f" 2>/dev/null || true
+     printf '%s\t%s\n' "$(date +%s)" "$1"; } >"$f.tmp" && mv -f "$f.tmp" "$f")
+}
+friday_always_allow() {
+  local f n=0 ts act now
+  f=$(friday_always_file); now=$(date +%s)
+  case "${1:-list}" in
+    list)
+      [ -s "$f" ] || { echo "Nothing is always allowed. The Always allow button on a harmless action (open an app, a link or a file; copy) adds one."; return 0; }
+      while IFS=$'\t' read -r ts act; do
+        [[ "$ts" =~ ^[0-9]+$ ]] || continue
+        n=$((n+1))
+        if [ $(( now - ts )) -lt 2592000 ]; then printf '%d  %s  (%d days left)\n' "$n" "$act" $(( (2592000 - now + ts) / 86400 ))
+        else printf '%d  %s  (expired, will ask)\n' "$n" "$act"; fi
+      done <"$f" ;;
+    forget)
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "Usage: friday always-allow forget <number from the list>" >&2; return 1; }
+      (umask 077; awk -v n="$2" 'NR != n' "$f" >"$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f") || return 1
+      echo "Forgotten: it asks again." ;;
+    clear) rm -f "$f"; echo "Nothing is always allowed now; everything asks again." ;;
+    *) echo "Usage: friday always-allow [list|clear|forget <n>]" >&2; return 1 ;;
+  esac
 }
 
 # Whether "act" may run an action without asking ($1 = the action, $2 =
@@ -6986,8 +7075,11 @@ $offer"
         if [ "$(friday_autonomy_mode)" = act ] && friday_act_may_run "$action_to_confirm" "$quoted_to_confirm"; then
           action=run
           notify-send -a FRIDAY -- "FRIDAY acted on its own" "$action_to_confirm"$'\n'"(Settings → Permissions to change this)" 2>/dev/null || true
+        elif [ "$quoted_to_confirm" != true ] && [ "$(friday_autonomy_mode)" != ask-all ] && friday_always_allowed "$action_to_confirm"; then
+          action=run
+          notify-send -a FRIDAY -- "FRIDAY ran it (you always allow this)" "$action_to_confirm"$'\n'"(friday always-allow list to change this)" 2>/dev/null || true
         else
-          action=$(friday_confirm "$action_to_confirm" "${nid:-}" "$preview_to_confirm")
+          action=$(friday_confirm "$action_to_confirm" "${nid:-}" "$preview_to_confirm" "$quoted_to_confirm")
         fi
         case "$action" in
           run)
@@ -7254,6 +7346,10 @@ $offer"
   feature|features)
     shift
     friday_feature "$@"
+    ;;
+  always-allow)
+    shift
+    friday_always_allow "$@"
     ;;
   autonomy)
     shift

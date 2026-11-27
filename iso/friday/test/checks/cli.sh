@@ -286,6 +286,7 @@ fi
 [[ "\$*" == *open=* ]] && echo open
 [[ "\$*" == *setup=* ]] && echo setup
 [[ "\$*" == *start=* ]] && echo start
+[[ "\$*" == *always=* && -n "\$ALWAYS_CONFIRM" ]] && { echo always; exit 0; }
 [[ "\$*" == *run=* && -z "\$CANCEL_CONFIRM" ]] && echo run
 [[ "\$*" == *cancel=* && -n "\$CANCEL_CONFIRM" ]] && echo cancel
 true
@@ -2072,6 +2073,42 @@ for a in 'git status' 'mkdir notes' 'xdg-open report.pdf'; do
   if act_runs "$a"; then pass "act runs a plain action: $a"; else fail "act asks for a plain action: $a"; fi
 done
 if act_runs 'git status' true; then fail "act ran an action from quoted text"; else pass "act asks for anything from quoted text"; fi
+# PRV-11: "Always allow", only for harmless actions (open an app, a link or a
+# file; copy), per exact action, never for quoted text.
+bash "$F" autonomy ask-risky >/dev/null
+rm -f "$HOME/.config/friday/always-allow"
+: >"$LOG"; GATED_ACTION="xdg-open https://example.com/docs" ALWAYS_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "a harmless action offers Always allow" "$(cat "$LOG")" "always=Always allow"
+contains "Always allow runs it" "$(cat "$LOG")" "friday-ctl-confirm"
+contains "and remembers that exact action" "$(bash "$F" always-allow list)" "xdg-open https://example.com/docs"
+: >"$LOG"; GATED_ACTION="xdg-open https://example.com/docs" CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+if grep -q "run=Run" "$LOG"; then fail "an always-allowed action still asked"; else pass "an always-allowed action doesn't ask again"; fi
+contains "it runs" "$(cat "$LOG")" "friday-ctl-confirm"
+contains "and says it was always allowed" "$(cat "$LOG")" "you always allow this"
+: >"$LOG"; GATED_ACTION="xdg-open https://example.com/other" CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "another link still asks (per exact action)" "$(cat "$LOG")" "run=Run"
+: >"$LOG"; GATED_ACTION="xdg-open https://example.com/docs" GATED_QUOTED=1 CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "from quoted text it asks anyway" "$(cat "$LOG")" "run=Run"
+if grep -q "always=" "$LOG"; then fail "Always allow offered for quoted text"; else pass "no Always allow for quoted text"; fi
+: >"$LOG"; CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+if grep -q "always=" "$LOG"; then fail "Always allow offered for git status"; else pass "no Always allow for a command (git status)"; fi
+bash "$F" feature always-allow off >/dev/null
+: >"$LOG"; GATED_ACTION="xdg-open https://example.com/docs" CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "with always-allow off it asks" "$(cat "$LOG")" "run=Run"
+bash "$F" feature always-allow on >/dev/null
+bash "$F" always-allow clear >/dev/null
+: >"$LOG"; GATED_ACTION="xdg-open https://example.com/docs" CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
+contains "after clear it asks again" "$(cat "$LOG")" "run=Run"
+harm_rule=$(sed -n '/^friday_irreversible() {/,/^}/p;/^friday_harmless_action() {/,/^}/p' "$F")
+harmless() { bash -c "$harm_rule"$'\n''friday_harmless_action "$1"' _ "$1"; }
+echo notes >"$HOME/notes.txt"; printf '#!/bin/sh\n' >"$HOME/tool.sh"; chmod +x "$HOME/tool.sh"
+for a in 'xdg-open https://example.com/a' "xdg-open 'https://example.com/?a=1&b=2'" "xdg-open $HOME/notes.txt" 'gio open https://example.com' 'wl-copy hello world'; do
+  if harmless "$a"; then pass "harmless: $a"; else fail "should be harmless: $a"; fi
+done
+for a in 'xdg-open https://example.com/?a&xterm' 'xdg-open "$(id)"' "xdg-open $HOME/tool.sh" 'xdg-open https://a.example; reboot' 'wl-copy $(cat secret)' 'notarealapp' 'git status' 'rm -rf ~' 'xdg-open a b'; do
+  if harmless "$a"; then fail "called harmless: $a"; else pass "asks every time: $a"; fi
+done
+rm -f "$HOME/notes.txt" "$HOME/tool.sh"
 # The daemon says when the question came from quoted text: act asks then.
 bash "$F" autonomy act >/dev/null
 : >"$LOG"; GATED_QUOTED=1 CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
