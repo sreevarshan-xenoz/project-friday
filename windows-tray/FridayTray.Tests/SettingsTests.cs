@@ -132,4 +132,48 @@ public class SettingsTests
         Assert.Equal(["FRIDAY_MODEL_ASK", "FRIDAY_MODEL_SCREEN", "FRIDAY_MODEL_CHORES"],
             AppSettings.ModelJobs.Select(j => j.Var).ToArray());
     }
+
+    [Fact]
+    public void Palette_default_is_core_with_red_accent()
+    {
+        var empty = Env("");
+        Assert.Equal("core", AppSettings.PaletteName(empty));
+        Assert.Equal("#d42d51", AppSettings.PaletteColours("core").Accent);
+        Assert.Equal("#d42d51", AppSettings.PaletteColours(empty).Accent);
+    }
+
+    [Fact]
+    public void Each_of_the_five_palette_names_gives_its_accent()
+    {
+        Assert.Equal("#d42d51", AppSettings.PaletteColours("core").Accent);
+        Assert.Equal("#ff8f4c", AppSettings.PaletteColours("ember").Accent);
+        Assert.Equal("#88c0d0", AppSettings.PaletteColours("polar").Accent);
+        Assert.Equal("#7cc4ff", AppSettings.PaletteColours("frost").Accent);
+        Assert.Equal("#a8d46f", AppSettings.PaletteColours("moss").Accent);
+
+        Assert.Equal("core", AppSettings.PaletteName(Env("FRIDAY_PALETTE=core")));
+        Assert.Equal("ember", AppSettings.PaletteName(Env("FRIDAY_PALETTE=ember")));
+        Assert.Equal("polar", AppSettings.PaletteName(Env("FRIDAY_PALETTE=polar")));
+        Assert.Equal("frost", AppSettings.PaletteName(Env("FRIDAY_PALETTE=frost")));
+        Assert.Equal("moss", AppSettings.PaletteName(Env("FRIDAY_PALETTE=moss")));
+    }
+
+    [Fact]
+    public void Unknown_palette_name_gives_core()
+    {
+        Assert.Equal("core", AppSettings.PaletteName(Env("FRIDAY_PALETTE=unknown")));
+        Assert.Equal("core", AppSettings.PaletteName(Env("FRIDAY_PALETTE=")));
+        Assert.Equal("#d42d51", AppSettings.PaletteColours("unknown").Accent);
+        Assert.Equal("#d42d51", AppSettings.PaletteColours(Env("FRIDAY_PALETTE=somethingelse")).Accent);
+    }
+
+    [Fact]
+    public void Palette_setting_writes_only_when_different_from_core()
+    {
+        var baseEnv = "OPENAI_API_KEY=sk-test\n";
+        Assert.Equal(baseEnv, AppSettings.WithPalette(baseEnv, "core"));
+        var ember = AppSettings.WithPalette(baseEnv, "ember");
+        Assert.Equal("OPENAI_API_KEY=sk-test\nFRIDAY_PALETTE=ember\n", ember);
+        Assert.Equal(baseEnv, AppSettings.WithPalette(ember, "core"));
+    }
 }

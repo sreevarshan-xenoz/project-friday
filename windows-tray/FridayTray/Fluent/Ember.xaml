@@ -9,17 +9,10 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:f="clr-namespace:FridayTray.Fluent">
 
-  <!-- Palette -->
-  <Color x:Key="InkColor">#FF0D0F13</Color>
-  <Color x:Key="GlassColor">#D8121419</Color>
-  <Color x:Key="TextColor">#FFF2EEE8</Color>
-  <Color x:Key="SubtextColor">#FFA8A39B</Color>
-  <Color x:Key="FaintColor">#FF77726B</Color>
-  <Color x:Key="EmberColor">#FFFF8F4C</Color>
-  <Color x:Key="EmberHiColor">#FFFFB07A</Color>
-  <Color x:Key="SignalColor">#FF5FD3BC</Color>
-  <Color x:Key="WarnColor">#FFF5C451</Color>
-  <Color x:Key="ErrorColor">#FFFF5D6C</Color>
+  <!-- Palette colour keys (InkColor, GlassColor, TextColor, SubtextColor,
+       FaintColor, EmberColor, EmberHiColor, SignalColor, WarnColor, ErrorColor,
+       EmberWashStartColor, EmberWashEndColor) are defined in code by FluentApp.Init
+       from the active palette before this dictionary is merged. -->
 
   <!-- Tinted glass: a touch lighter at the top, so the surface has depth even
        where Windows shows no blur (no GPU, transparency off, Windows 10). -->
@@ -29,13 +22,16 @@
   </LinearGradientBrush>
   <!-- A faint warmth in the corner the orb sits in. -->
   <RadialGradientBrush x:Key="EmberWash" Center="0.04,0.02" GradientOrigin="0.04,0.02" RadiusX="0.55" RadiusY="0.9">
-    <GradientStop Color="#1FFF8F4C" Offset="0" />
-    <GradientStop Color="#00FF8F4C" Offset="1" />
+    <GradientStop Color="{StaticResource EmberWashStartColor}" Offset="0" />
+    <GradientStop Color="{StaticResource EmberWashEndColor}" Offset="1" />
   </RadialGradientBrush>
   <SolidColorBrush x:Key="Text" Color="{StaticResource TextColor}" />
   <SolidColorBrush x:Key="Subtext" Color="{StaticResource SubtextColor}" />
   <SolidColorBrush x:Key="Faint" Color="{StaticResource FaintColor}" />
   <SolidColorBrush x:Key="Ember" Color="{StaticResource EmberColor}" />
+  <!-- The window's dark ground and a faint accent tint (the settings marker). -->
+  <SolidColorBrush x:Key="Ink" Color="{StaticResource InkColor}" />
+  <SolidColorBrush x:Key="EmberTint" Color="{StaticResource EmberWashStartColor}" />
   <SolidColorBrush x:Key="Signal" Color="{StaticResource SignalColor}" />
   <SolidColorBrush x:Key="Warn" Color="{StaticResource WarnColor}" />
   <SolidColorBrush x:Key="Error" Color="{StaticResource ErrorColor}" />

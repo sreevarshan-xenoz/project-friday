@@ -10,7 +10,7 @@
 >
   <Grid x:Name="Frame" Margin="24">
     <!-- The shadow is its own layer, so the card's text stays crisp. -->
-    <Border CornerRadius="14" Background="#FF0D0F13" IsHitTestVisible="False">
+    <Border CornerRadius="14" Background="{StaticResource Ink}" IsHitTestVisible="False">
       <Border.Effect><DropShadowEffect BlurRadius="34" ShadowDepth="10" Direction="270" Opacity="0.5" Color="Black" /></Border.Effect>
     </Border>
   <Border x:Name="Card" Background="{StaticResource Glass}" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="14">

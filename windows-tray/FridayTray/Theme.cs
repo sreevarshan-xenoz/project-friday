@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using FridayTray.Core;
 
 namespace FridayTray;
 
@@ -8,9 +9,11 @@ namespace FridayTray;
 /// </summary>
 internal static class Theme
 {
-    public static readonly Color Faint = ColorTranslator.FromHtml("#6c6862");
-    public static readonly Color Accent = ColorTranslator.FromHtml("#ff8f4c");
-    public static readonly Color Warn = ColorTranslator.FromHtml("#f5c451");
+    private static readonly PaletteColors Palette = AppSettings.PaletteColours(Fluent.FluentApp.ChosenPalette());
+
+    public static readonly Color Faint = ColorTranslator.FromHtml(Palette.Faint);
+    public static readonly Color Accent = ColorTranslator.FromHtml(Palette.Accent);
+    public static readonly Color Warn = ColorTranslator.FromHtml(Palette.Warn);
 
     // FRIDAY's mark (the aperture F) in the logo's colours, whatever the
     // windows' palette: obsidian disc, silver blades, platinum F, core red.

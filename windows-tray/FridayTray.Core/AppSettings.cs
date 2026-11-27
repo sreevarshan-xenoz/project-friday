@@ -1,6 +1,20 @@
 namespace FridayTray.Core;
 
 /// <summary>
+/// A dark palette's colours as "#rrggbb" strings, matching FRIDAY Shell on Linux.
+/// </summary>
+public sealed record PaletteColors(
+    string Bg,
+    string Surface,
+    string Text,
+    string Subtext,
+    string Faint,
+    string Accent,
+    string Signal,
+    string Warn,
+    string Error);
+
+/// <summary>
 /// The on/off settings kept in friday.env, read and written the way the daemon
 /// reads them (so the Settings window and `friday.env` never disagree):
 /// `FRIDAY_DESKTOP=0` turns desktop control off, `FRIDAY_SCREEN_TEXT=0` turns
@@ -9,6 +23,45 @@ namespace FridayTray.Core;
 /// </summary>
 public static class AppSettings
 {
+    public const string Palette = "FRIDAY_PALETTE";
+    public static readonly string[] Palettes = ["core", "ember", "polar", "frost", "moss"];
+    public static readonly string[] PaletteNames = Palettes;
+
+    private static readonly Dictionary<string, PaletteColors> AllPalettes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["core"] = new("#111318", "#181b21", "#dde0e6", "#b8bbc3", "#9498a2", "#d42d51", "#8ea4c8", "#e8b04f", "#ff5d6c"),
+        ["ember"] = new("#0d0f13", "#16191f", "#ece8e2", "#a39e96", "#6c6862", "#ff8f4c", "#5fd3bc", "#f5c451", "#ff5d6c"),
+        ["polar"] = new("#2e3440", "#3b4252", "#eceff4", "#d8dee9", "#7b88a1", "#88c0d0", "#b48ead", "#ebcb8b", "#bf616a"),
+        ["frost"] = new("#0e141b", "#151d27", "#e6eef6", "#9fb0c2", "#64748a", "#7cc4ff", "#b29cff", "#f2c86b", "#ff6b7a"),
+        ["moss"] = new("#0f120e", "#171b15", "#e9ecdf", "#a7ad99", "#6b715f", "#a8d46f", "#e0b458", "#e8c35a", "#ef6a5a"),
+    };
+
+    /// <summary>The active palette name from the environment ("core" if missing or unknown).</summary>
+    public static string PaletteName(IReadOnlyDictionary<string, string> env)
+    {
+        if (env.TryGetValue(Palette, out var v))
+        {
+            var name = v.Trim().ToLowerInvariant();
+            if (Palettes.Contains(name))
+                return name;
+        }
+        return "core";
+    }
+
+    /// <summary>Colours for <paramref name="name"/> ("core" if unknown).</summary>
+    public static PaletteColors PaletteColours(string name) =>
+        AllPalettes.TryGetValue(name.Trim(), out var p) ? p : AllPalettes["core"];
+
+    public static PaletteColors PaletteColours(IReadOnlyDictionary<string, string> env) =>
+        PaletteColours(PaletteName(env));
+
+    public static PaletteColors PaletteColors(string name) => PaletteColours(name);
+
+    public static PaletteColors PaletteColors(IReadOnlyDictionary<string, string> env) => PaletteColours(env);
+
+    public static string WithPalette(string existing, string palette) =>
+        EnvFile.WithSetting(existing, Palette, palette is "ember" or "polar" or "frost" or "moss" ? palette : null);
+
     public const string DesktopControl = "FRIDAY_DESKTOP";
     public const string ScreenText = "FRIDAY_SCREEN_TEXT";
     public const string Agents = "FRIDAY_AGENTS";
