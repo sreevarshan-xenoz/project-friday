@@ -74,10 +74,15 @@ Singleton {
   readonly property var current: obj(parsed.current)
   readonly property bool working: running && current !== null && current.active === true
   // The question alone: the daemon's goal also carries what went with it
-  // ("\n\n[docs]\n…", "[selection]", …), which isn't for showing.
+  // ("\n\n[docs]\n…", "\n\nUse this text as context:" and the selection).
+  // The same cut as the daemon's goal_segment (goal-execution planning.rs).
   function question(g) {
-    const i = g.search(/\n\n\[[a-z][a-z -]*\]\n/);
-    return (i < 0 ? g : g.slice(0, i)).trim();
+    let end = g.length;
+    for (const m of ["\n\n[", "\n\nUse this text as context:", "\r\n\r\n[", "\r\n\r\nUse this text as context:"]) {
+      const i = g.indexOf(m);
+      if (i >= 0 && i < end) end = i;
+    }
+    return g.slice(0, end).trim();
   }
   readonly property string goal: current ? question(str(current.goal)) : ""
   readonly property string phase: current ? str(current.phase) : ""
