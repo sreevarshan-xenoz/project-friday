@@ -19,4 +19,5 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | FRIDAY OS installer option, `iso/friday/airootfs/usr/share/friday/dots-hyprland` |
 | [Omarchy](https://github.com/basecamp/omarchy) | MIT | FRIDAY OS's Hyprland base, pinned in `iso/friday/fetch-omarchy.sh` |
 | [agent-desktop](https://github.com/vercel-labs/agent-desktop) | Apache-2.0 | `friday-git` and the MSI (`agent-desktop-LICENSE` beside it) |
+| [obscura](https://github.com/h4ckf0r0day/obscura) | Apache-2.0 | downloaded on request (`friday obscura install`), a pinned release in `packaging/tools/tools.json` |
 | [tiny-voca](https://github.com/n4ze3m/tiny-voca), [dizione](https://github.com/n4ze3m/dizione) | Apache-2.0 | voice (`services/mobile/src/tinyvoca`, see its NOTICE) |
