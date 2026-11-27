@@ -92,10 +92,16 @@ Item {
         else { openTimer.stop(); closeTimer.restart(); }
       }
     }
-    // Scrolling over the player changes the volume.
-    WheelHandler {
+    // Scrolling over the player changes the volume. (A button-less
+    // MouseArea: a WheelHandler here never got the wheel events.)
+    MouseArea {
+      anchors.fill: parent
       enabled: island.face === "media"
-      onWheel: e => Audio.setVolume(Math.max(0, Math.min(1, Audio.volume + (e.angleDelta.y > 0 ? 0.05 : -0.05))))
+      acceptedButtons: Qt.NoButton
+      onWheel: e => {
+        if (e.angleDelta.y !== 0)
+          Audio.setVolume(Math.max(0, Math.min(1, Audio.volume + (e.angleDelta.y > 0 ? 0.05 : -0.05))));
+      }
     }
 
     // A ripple from where it was clicked.

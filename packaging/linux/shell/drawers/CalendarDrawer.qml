@@ -110,5 +110,11 @@ FocusScope {
     }
   }
 
-  WheelHandler { onWheel: e => root.offset += e.angleDelta.y > 0 ? -1 : 1 }
+  // Scrolling steps the month. (A button-less MouseArea: a WheelHandler
+  // here never got the wheel events on a layer surface.)
+  MouseArea {
+    anchors.fill: parent
+    acceptedButtons: Qt.NoButton
+    onWheel: e => { if (e.angleDelta.y !== 0) root.offset += e.angleDelta.y > 0 ? -1 : 1; }
+  }
 }
