@@ -120,17 +120,25 @@ friday_banner() {
 # friday_orb <frame>: FRIDAY's orb in plain ASCII (the console font has
 # nothing fancier), its rings of light moving outward frame by frame. Drawn
 # under the live status line while a long step waits.
-FRIDAY_ORB_FRAMES=4
+FRIDAY_ORB_FRAMES=5
 friday_orb() {
   local k=$(( $1 % FRIDAY_ORB_FRAMES )) a=" " b=" " c=" "
-  # The wave: the inner ring lights, then the middle, then the outer.
-  case $k in 0) a="*" ;; 1) a="." b="*" ;; 2) b="." c="*" ;; 3) c="." ;; esac
+  # The wave: the inner ring lights, then the middle, then the outer, each
+  # fading (* then : then .) as the next one lights.
+  case $k in
+    0) a="*" ;;
+    1) a=":" b="*" ;;
+    2) a="." b=":" c="*" ;;
+    3) b="." c=":" ;;
+    4) c="." ;;
+  esac
+  # Every row centred on the (@) (column 16), so the rings stay round.
   printf '%s\n' \
     "            $c       $c" \
     "        $c     $b   $b     $c" \
-    "      $c    $b   $a $a $a   $b    $c" \
+    "      $c   $b   $a $a $a   $b   $c" \
     "     $c   $b   $a (@) $a   $b   $c" \
-    "      $c    $b   $a $a $a   $b    $c" \
+    "      $c   $b   $a $a $a   $b   $c" \
     "        $c     $b   $b     $c" \
     "            $c       $c"
 }

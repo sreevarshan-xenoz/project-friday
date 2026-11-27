@@ -11,7 +11,7 @@ export PATH="$OMARCHY_PATH/bin:$PATH"
 source "$(dirname "$(readlink -f "$0")")/friday-tui.sh"
 friday_console_theme
 
-STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES BROWSERS AI REVIEW)
+STEPS=(NETWORK DISK REGION IDENTITY SECURITY LOOK FEATURES APPS AI REVIEW)
 
 # Defaults (also what an unattended run would use).
 TARGET_DISK="" TARGET_LABEL=""
@@ -25,6 +25,9 @@ SESSION="Hyprland (tiling, the FRIDAY OS default)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 BROWSERS=""
 DEFAULT_BROWSER="chromium"
+# Code editors and AI coding agents (ids, space-separated; see step_apps).
+EDITORS=""
+AGENTS=""
 FRIDAY_AI_PROVIDERS="" FRIDAY_AI_KEYS=""
 FRIDAY_LOCAL_ENGINE="" FRIDAY_LOCAL_BUDGET_MB="" FRIDAY_LOCAL_MODEL="" FRIDAY_LOCAL_LABEL=""
 AUTOLOGIN="false"
@@ -512,6 +515,89 @@ friday_browsers_label() {
   echo "$out"
 }
 
+# The apps step: browsers, then code editors, then AI coding agents. Each
+# list starts with "All of these"; the agents picked are offered to FRIDAY at
+# first login (friday connect), so it can answer through them.
+FRIDAY_EDITORS=(
+  "vscode|VS Code (Microsoft's build from the AUR)"
+  "code|Code - OSS (VS Code's open-source build)"
+  "zed|Zed"
+  "neovim|Neovim"
+  "cursor|Cursor (from the AUR)"
+)
+FRIDAY_AGENTS=(
+  "opencode|OpenCode (free models with no account needed)"
+  "claude|Claude Code (your Anthropic account)"
+  "codex|Codex (your OpenAI / ChatGPT account)"
+  "gemini|Gemini CLI (your Google account)"
+  "agy|Antigravity CLI: agy (your Google account)"
+  "cline|Cline (your Cline account or its free models)"
+  "kilo|Kilo (free models or your Kilo account)"
+)
+
+# friday_pick_many <current ids> <id|label>...: a gum list with "All of these"
+# first, the current ids ticked; prints the ids picked.
+friday_pick_many() {
+  local current=" $1 " row id label
+  shift
+  local -a labels=("All of these") sel=()
+  for row in "$@"; do
+    id=${row%%|*} label=${row#*|}
+    labels+=("$label")
+    [[ $current == *" $id "* ]] && sel+=("$label")
+  done
+  local -a sel_arg=()
+  if ((${#sel[@]} > 0)); then
+    local IFS=,
+    sel_arg=(--selected="${sel[*]}")
+    unset IFS
+  fi
+  local picks
+  picks=$(printf '%s\n' "${labels[@]}" \
+    | gum choose --no-limit --cursor="$FRIDAY_CURSOR" --height=$(( ${#labels[@]} + 1 )) "${sel_arg[@]}") || picks=""
+  local -a out=()
+  for row in "$@"; do
+    id=${row%%|*} label=${row#*|}
+    if grep -qxF -- "All of these" <<<"$picks" || grep -qxF -- "$label" <<<"$picks"; then out+=("$id"); fi
+  done
+  echo "${out[*]:-}"
+}
+
+# friday_apps_label <ids> <id|label>...: the picked names, short.
+friday_apps_label() {
+  local ids=" $1 " row id label out=""
+  shift
+  for row in "$@"; do
+    id=${row%%|*} label=${row#*|}
+    label=${label%% (*}
+    [[ $ids == *" $id "* ]] && out+="${out:+, }$label"
+  done
+  echo "${out:-none}"
+}
+
+step_apps() {
+  step_browsers
+  screen 8 "CODE EDITORS"
+  friday_head "Which code editors do you want?"
+  friday_say "Pick any, or none. Press x to turn a line on or off, Enter to go on."
+  friday_note "  All of these picks every line, whatever else is ticked."
+  echo
+  EDITORS=$(friday_pick_many "$EDITORS" "${FRIDAY_EDITORS[@]}")
+  # VS Code and its open-source build can't both be installed: keep VS Code.
+  if [[ " $EDITORS " == *" vscode "* && " $EDITORS " == *" code "* ]]; then
+    EDITORS=$(sed 's/\(^\| \)code\( \|$\)/ /' <<<" $EDITORS " | xargs)
+    friday_note "  VS Code and Code - OSS can't both be installed; keeping VS Code."
+  fi
+  friday_ok "Editors: $(friday_apps_label "$EDITORS" "${FRIDAY_EDITORS[@]}")"
+  screen 8 "AI CODING AGENTS"
+  friday_head "Which AI coding agents do you want?"
+  friday_say "They write and fix code in a terminal. FRIDAY can answer through the ones you sign in to, and watches over their work when you allow it."
+  friday_note "  After you log in, FRIDAY offers to connect the ones that use an account (friday connect)."
+  echo
+  AGENTS=$(friday_pick_many "$AGENTS" "${FRIDAY_AGENTS[@]}")
+  friday_ok "Agents: $(friday_apps_label "$AGENTS" "${FRIDAY_AGENTS[@]}")"
+}
+
 step_ai() {
   screen 9
   friday_head "Give FRIDAY a brain"
@@ -683,6 +769,8 @@ review() {
       "Desktop     $THEME$([[ $THEME != *Dots-Hyprland* ]] && echo " · ${SHELL_STYLE%% (*} · ${SESSION%% (*}")" \
       "Login       $SDDM_THEME" \
       "Browsers    $(friday_browsers_label)" \
+      "Editors     $(friday_apps_label "$EDITORS" "${FRIDAY_EDITORS[@]}")" \
+      "Agents      $(friday_apps_label "$AGENTS" "${FRIDAY_AGENTS[@]}")" \
       "Allowed     $(friday_features_label)" \
       "AI          $FRIDAY_AI_LABEL"
     echo
@@ -695,7 +783,7 @@ review() {
     echo
     case "$(gum choose --cursor="$FRIDAY_CURSOR" \
         "Install FRIDAY OS" "Change disk" "Change names" "Change password" \
-        "Change region" "Change desktop" "Change what FRIDAY may do" "Change browsers" "Change AI" "Quit setup")" in
+        "Change region" "Change desktop" "Change what FRIDAY may do" "Change apps" "Change AI" "Quit setup")" in
       "Install FRIDAY OS")
         if [[ "$INSTALL_MODE" == alongside ]]; then
           gum confirm --default=false --affirmative="Install alongside" --negative="Back" \
@@ -716,7 +804,7 @@ review() {
         fi ;;
       "Change desktop") step_look choose ;;
       "Change what FRIDAY may do") step_features ;;
-      "Change browsers") step_browsers ;;
+      "Change apps") step_apps ;;
       "Change AI") step_ai ;;
       *) leave_menu "Nothing was written to disk." ;;
     esac
@@ -733,7 +821,7 @@ step_identity
 step_security
 step_look
 step_features
-step_browsers
+step_apps
 step_ai
 review
 
@@ -741,7 +829,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE BROWSERS DEFAULT_BROWSER
+export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE BROWSERS DEFAULT_BROWSER EDITORS AGENTS
 # The person confirmed erasing this disk (or adding FRIDAY next to what's on
 # it) on the review screen.
 if [[ "$INSTALL_MODE" == alongside ]]; then

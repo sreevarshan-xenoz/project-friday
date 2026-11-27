@@ -74,6 +74,10 @@ STEPS = [
             (1, DOWN * 2 + "x"),  # Zen
             (1, ENTER),
             (3, DOWN + ENTER),  # links: Zen
+            (3, DOWN * 3 + "x"),  # editors: Zed (after All, VS Code, Code - OSS)
+            (1, ENTER),
+            (3, "x"),  # agents: All of these
+            (1, ENTER),
             (6, DOWN + "x"),  # AI: Gemini
             (1, DOWN + "x"),  # Groq
             (1, DOWN * 6 + "x"),  # Local AI (last)
@@ -86,6 +90,8 @@ STEPS = [
         if MULTI
         else [
             (4, ENTER),  # browsers: default (Chromium only)
+            (3, ENTER),  # editors: none
+            (3, ENTER),  # agents: none
             (6, ENTER),  # AI: OpenCode Zen (first, default)
             (3, ENTER),  # no key: free models
         ]
@@ -170,6 +176,8 @@ if MULTI:
             "review lists every choice": "Gemini (key ••••3456)" in text
             and "Local: qwen3:4b on Ollama (text only, backs up cloud)" in text,
             "review shows chosen browsers": "Zen (default)" in text and "Brave" in text,
+            "review shows the editor picked": "Editors     Zed" in text,
+            "All of these picks every agent": "OpenCode, Claude Code, Codex, Gemini CLI" in text,
         }
     )
 else:
@@ -192,9 +200,14 @@ ai_spec = (
     else [("ai", "[]"), ("keys", "[]"), ("local", "[::]")]
 )
 browser_spec = (
-    [("browsers", "[brave zen]"), ("default_browser", "zen")]
+    [
+        ("browsers", "[brave zen]"),
+        ("default_browser", "zen"),
+        ("editors", "[zed]"),
+        ("agents", "[opencode claude codex gemini agy cline kilo]"),
+    ]
     if MULTI
-    else [("browsers", "[]"), ("default_browser", "chromium")]
+    else [("browsers", "[]"), ("default_browser", "chromium"), ("editors", "[]"), ("agents", "[]")]
 )
 for key, want in (
     ai_spec

@@ -1168,6 +1168,38 @@ friday_agent_clis_current() {
   { sed -n 's/^FRIDAY_AGENT_CLIS=//p' "$env_file" 2>/dev/null || true; } | tail -n1
 }
 
+# The account-based agents picked in setup (~/.config/friday/agents-picked)
+# that are installed but not connected yet, one name a line.
+friday_agents_to_connect() {
+  local picked="${XDG_CONFIG_HOME:-$HOME/.config}/friday/agents-picked" a connected
+  [ -s "$picked" ] || return 0
+  connected=",$(friday_agent_clis_current),"
+  while IFS= read -r a; do
+    case "$a" in claude|codex|agy|cline) ;; *) continue ;; esac
+    friday_agent_cli_info "$a" || continue
+    command -v "$AC_BIN" >/dev/null 2>&1 || continue
+    [[ "$connected" == *",$a,"* ]] && continue
+    echo "$a"
+  done <"$picked"
+}
+# First login: one notification offering to connect them, each signing in
+# through its own app in a terminal.
+friday_agents_offer() {
+  local -a names=() labels=()
+  mapfile -t names < <(friday_agents_to_connect)
+  (( ${#names[@]} )) || return 0
+  local n
+  for n in "${names[@]}"; do friday_agent_cli_info "$n" && labels+=("${AC_LABEL%% (*}"); done
+  local list="${labels[0]}"
+  for n in "${labels[@]:1}"; do list+=", $n"; done
+  local action cmd=""
+  action=$(notify-send -a FRIDAY -t 30000 -A connect="Connect them" "Connect your coding agents?" \
+    "You installed $list. Sign in once and FRIDAY can answer through them, with your account." 2>/dev/null || true)
+  [ "$action" = connect ] || return 0
+  for n in "${names[@]}"; do cmd+="friday connect $n; echo; "; done
+  foot -T "FRIDAY · connect your agents" bash -c "${cmd}read -rsn1 -p 'Press any key to close.'"
+}
+
 friday_connect() {
   # --prefer: use connected accounts before the free models (slower: each
   # answer starts the app, and counts against the account's plan).
@@ -1178,10 +1210,15 @@ friday_connect() {
     command -v gum >/dev/null || { echo "usage: friday connect <claude|codex|agy|cline|hermes>" >&2; return 1; }
     echo "Use an AI account you already have. FRIDAY asks through its own app,"
     echo "with your sign-in; it never sees your password or token."
-    choice=$(gum choose --cursor="❯ " \
-      "Claude Code (Anthropic account)" "Codex (OpenAI / ChatGPT account)" \
-      "Antigravity (Google account)" "Cline (Cline account, incl. its free models)" \
-      "Hermes Agent (its own provider, or Nous Portal's free tier)") || return 1
+    # The ones whose app is installed come first, marked.
+    local -a have=() rest=() row
+    for row in "claude|Claude Code (Anthropic account)" "codex|Codex (OpenAI / ChatGPT account)" \
+        "agy|Antigravity (Google account)" "cline|Cline (Cline account, incl. its free models)" \
+        "hermes|Hermes Agent (its own provider, or Nous Portal's free tier)"; do
+      friday_agent_cli_info "${row%%|*}"
+      if command -v "$AC_BIN" >/dev/null 2>&1; then have+=("${row#*|} · installed"); else rest+=("${row#*|}"); fi
+    done
+    choice=$(gum choose --cursor="❯ " "${have[@]}" "${rest[@]}") || return 1
     case "$choice" in
       Claude*) name=claude ;; Codex*) name=codex ;; Antigravity*) name=agy ;; Cline*) name=cline ;; Hermes*) name=hermes ;;
     esac
@@ -3316,6 +3353,9 @@ friday_welcome() {
   # A new install starts with the tour, not a list of changes.
   friday_whats_new --record 2>/dev/null || true
   sleep "${FRIDAY_WELCOME_DELAY:-6}"   # let the notification daemon come up
+  # The AI coding agents picked in setup: offer to connect them (in the
+  # background, beside the tour).
+  friday_agents_offer &
   local name action
   name=$(getent passwd "${USER:-$(id -un)}" | cut -d: -f5 | cut -d, -f1 || true); name="${name:-${USER:-friend}}"
   local free=true
