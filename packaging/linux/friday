@@ -5161,43 +5161,50 @@ friday_irreversible() {
 }
 
 # PRV-11: whether an action is harmless enough to "Always allow": opening
-# an app, a web link or a file, or copying text. One plain argument at most
-# (no shell syntax: the action runs through a shell), a link that is
-# http(s), a file that exists and isn't a program, an app that has a
-# desktop entry. Anything else is asked about every time.
+# an app, a web link or a file, or copying text. The action runs through a
+# shell, so: no control characters, one plain argument (or one quoted one
+# with nothing the shell expands), a web link (http or https), a file by
+# its absolute path that is (after links) neither a program nor a .desktop
+# file, an installed app by its own name (a system desktop entry whose file
+# and program are that name, not a shell or interpreter, not a terminal
+# app), or plain words to copy. Anything else is asked about every time.
 friday_harmless_action() {
-  local a=$1 verb arg rest f
-  [[ "$a" == *$'\n'* ]] && return 1
+  local a=$1 verb arg rest f w quoted=false
+  [[ "$a" =~ [[:cntrl:]] ]] && return 1
   friday_irreversible "$a" && return 1
   read -r verb arg rest <<<"$a"
   case "$verb" in
-    xdg-open|gio|gtk-launch|kde-open|wl-copy) ;;
+    xdg-open|gio|kde-open|wl-copy) ;;
+    bash|sh|zsh|dash|fish|ksh|python|python3|perl|ruby|node|php|lua|env|java|jshell|vim|nvim|vi|nano|emacs|xterm|foot|kitty|alacritty|ghostty|wezterm|konsole|gnome-terminal) return 1 ;;
     *)
-      # An app by its own name, nothing after it, with a desktop entry.
+      # An installed app by its own name, nothing after it.
       [ -z "$arg" ] && [[ "$verb" =~ ^[a-z0-9][a-z0-9._+-]*$ ]] || return 1
-      # (The program's own name: Exec=/usr/lib/firefox/firefox %u is firefox.)
-      local w
-      while read -r w; do
-        [ "${w##*/}" = "$verb" ] && return 0
-      done < <(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "${XDG_DATA_HOME:-$HOME/.local/share}"/applications/*.desktop /usr/share/applications/*.desktop 2>/dev/null)
-      return 1 ;;
+      f=/usr/share/applications/$verb.desktop
+      [ -f "$f" ] || return 1
+      grep -qi '^Terminal=true' "$f" && return 1
+      w=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$f" | head -n1)
+      [ "${w##*/}" = "$verb" ]
+      return ;;
   esac
   if [ "$verb" = gio ]; then [ "$arg" = open ] || return 1; read -r _ _ arg rest <<<"$a"; fi
-  # Copying: plain words only.
+  # Copying: plain words, none of them an option.
   if [ "$verb" = wl-copy ]; then
-    case "${a#wl-copy}" in *[\"\'\`\$\;\|\&\<\>\(\)\{\}\\\*\?\~\!\#]*) return 1 ;; esac
-    [[ "$arg" != -* ]]
-    return
+    [ -n "$arg" ] || return 1
+    case "${a#wl-copy}" in *[\"\'\`\$\;\|\&\<\>\(\)\{\}\[\]\\\*\?\~\!\#]*) return 1 ;; esac
+    for w in $arg $rest; do [[ "$w" != -* ]] || return 1; done
+    return 0
   fi
   [ -n "$arg" ] && [ -z "$rest" ] || return 1
-  # The action runs through a shell: one word, or one quoted string with
-  # nothing the shell would expand inside it.
-  if [[ "$arg" =~ ^\'([^\']*)\'$ ]]; then arg=${BASH_REMATCH[1]}
-  elif [[ "$arg" =~ ^\"([^\"\$\`\\]*)\"$ ]]; then arg=${BASH_REMATCH[1]}
-  else case "$arg" in *[\"\'\`\$\;\|\&\<\>\(\)\{\}\\]*) return 1 ;; esac; fi
-  if [ "$verb" = gtk-launch ]; then [[ "$arg" =~ ^[A-Za-z0-9._-]+$ ]]; return; fi
+  if [[ "$arg" =~ ^\'([^\']*)\'$ ]]; then arg=${BASH_REMATCH[1]}; quoted=true
+  elif [[ "$arg" =~ ^\"([^\"\$\`\\]*)\"$ ]]; then arg=${BASH_REMATCH[1]}; quoted=true
+  else case "$arg" in *[\"\'\`\$\;\|\&\<\>\(\)\{\}\[\]\\\*\?]*) return 1 ;; esac; fi
+  [[ "$arg" != -* ]] || return 1
   [[ "$arg" =~ ^https?://[^[:space:]]+$ ]] && return 0
-  f="${arg/#\~/$HOME}"; f="${f#file://}"
+  # A file: by its absolute path ("~/" only unquoted, where the shell expands it).
+  if [[ "$arg" == "~/"* ]]; then $quoted && return 1; f="$HOME/${arg#\~/}"
+  elif [[ "$arg" == /* ]]; then f=$arg
+  else return 1; fi
+  f=$(realpath -e -- "$f" 2>/dev/null) || return 1
   [ -f "$f" ] && [ ! -x "$f" ] && [[ "$f" != *.desktop ]]
 }
 
@@ -5218,7 +5225,7 @@ friday_always_remember() {
   local f; f=$(friday_always_file)
   mkdir -p "$(dirname "$f")"
   (umask 077
-   { awk -F'\t' -v a="$1" '$2 != a' "$f" 2>/dev/null || true
+   { A="$1" awk -F'\t' '$2 != ENVIRON["A"]' "$f" 2>/dev/null || true
      printf '%s\t%s\n' "$(date +%s)" "$1"; } >"$f.tmp" && mv -f "$f.tmp" "$f")
 }
 friday_always_allow() {
@@ -5227,14 +5234,16 @@ friday_always_allow() {
   case "${1:-list}" in
     list)
       [ -s "$f" ] || { echo "Nothing is always allowed. The Always allow button on a harmless action (open an app, a link or a file; copy) adds one."; return 0; }
+      # Numbered by line, as forget takes them.
       while IFS=$'\t' read -r ts act; do
-        [[ "$ts" =~ ^[0-9]+$ ]] || continue
         n=$((n+1))
+        [[ "$ts" =~ ^[0-9]+$ ]] || continue
         if [ $(( now - ts )) -lt 2592000 ]; then printf '%d  %s  (%d days left)\n' "$n" "$act" $(( (2592000 - now + ts) / 86400 ))
         else printf '%d  %s  (expired, will ask)\n' "$n" "$act"; fi
       done <"$f" ;;
     forget)
-      [[ "${2:-}" =~ ^[0-9]+$ ]] || { echo "Usage: friday always-allow forget <number from the list>" >&2; return 1; }
+      [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] && [ -n "$(sed -n "${2}p" "$f" 2>/dev/null)" ] \
+        || { echo "Usage: friday always-allow forget <number from friday always-allow list>" >&2; return 1; }
       (umask 077; awk -v n="$2" 'NR != n' "$f" >"$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f") || return 1
       echo "Forgotten: it asks again." ;;
     clear) rm -f "$f"; echo "Nothing is always allowed now; everything asks again." ;;

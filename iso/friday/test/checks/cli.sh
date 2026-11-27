@@ -2105,10 +2105,23 @@ echo notes >"$HOME/notes.txt"; printf '#!/bin/sh\n' >"$HOME/tool.sh"; chmod +x "
 for a in 'xdg-open https://example.com/a' "xdg-open 'https://example.com/?a=1&b=2'" "xdg-open $HOME/notes.txt" 'gio open https://example.com' 'wl-copy hello world'; do
   if harmless "$a"; then pass "harmless: $a"; else fail "should be harmless: $a"; fi
 done
-for a in 'xdg-open https://example.com/?a&xterm' 'xdg-open "$(id)"' "xdg-open $HOME/tool.sh" 'xdg-open https://a.example; reboot' 'wl-copy $(cat secret)' 'notarealapp' 'git status' 'rm -rf ~' 'xdg-open a b'; do
+printf '[Desktop Entry]\nExec=sh -c x\n' >"$HOME/evil.desktop"; ln -sf "$HOME/evil.desktop" "$HOME/innocent.txt"
+: >"$HOME/steam:run"
+for a in 'xdg-open https://example.com/?a&xterm' 'xdg-open "$(id)"' "xdg-open $HOME/tool.sh" 'xdg-open https://a.example; reboot' 'wl-copy $(cat secret)' 'notarealapp' 'git status' 'rm -rf ~' 'xdg-open a b' \
+    'sh' 'env' 'python3' 'gtk-launch firefox' 'wl-copy' 'wl-copy hello -c' 'wl-copy hello --clear' "xdg-open $HOME/innocent.txt" "xdg-open $HOME/evil.desktop" \
+    'xdg-open steam:run' 'xdg-open "~/notes.txt"' 'xdg-open https://example.com/*' $'wl-copy a\tb' $'wl-copy benign\rspoof' 'xdg-open --help' 'xdg-open notes.txt'; do
   if harmless "$a"; then fail "called harmless: $a"; else pass "asks every time: $a"; fi
 done
-rm -f "$HOME/notes.txt" "$HOME/tool.sh"
+if harmless 'xdg-open ~/notes.txt'; then pass "harmless: xdg-open ~/notes.txt (unquoted, the shell expands it)"; else fail "should be harmless: xdg-open ~/notes.txt"; fi
+rm -f "$HOME/notes.txt" "$HOME/tool.sh" "$HOME/evil.desktop" "$HOME/innocent.txt" "$HOME/steam:run"
+# The list is numbered by line, as forget takes them; 0 or a missing one is refused.
+printf '\n%s\txdg-open https://example.com/a\n%s\txdg-open https://example.com/b\n' "$(date +%s)" "$(date +%s)" >"$HOME/.config/friday/always-allow"
+contains "list numbers by line" "$(bash "$F" always-allow list)" "3  xdg-open https://example.com/b"
+bash "$F" always-allow forget 3 >/dev/null
+if grep -q example.com/b "$HOME/.config/friday/always-allow"; then fail "forget 3 left the third line"; else pass "forget removes the listed one"; fi
+if bash "$F" always-allow forget 0 >/dev/null 2>&1; then fail "forget 0 was accepted"; else pass "forget 0 is refused"; fi
+if bash "$F" always-allow forget 9 >/dev/null 2>&1; then fail "forget of a missing line was accepted"; else pass "forget of a missing number is refused"; fi
+rm -f "$HOME/.config/friday/always-allow"
 # The daemon says when the question came from quoted text: act asks then.
 bash "$F" autonomy act >/dev/null
 : >"$LOG"; GATED_QUOTED=1 CANCEL_CONFIRM=1 bash "$F" ask "gated action"; sleep 0.4
