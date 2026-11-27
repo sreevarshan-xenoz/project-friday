@@ -102,7 +102,7 @@ FocusScope {
     Rectangle {
       Layout.fillWidth: true
       implicitHeight: 48
-      radius: height / 2
+      radius: Theme.round(height)
       color: Theme.glassWell
       border.width: drop.containsDrag ? 2 : 1
       border.color: drop.containsDrag || input.activeFocus ? Theme.alpha(Theme.accent, 0.6) : Theme.outline

@@ -15,6 +15,7 @@ import qs.services
 //   dock    one floating bar along the bottom
 //   keystone  one notch hanging from the middle of the top edge, the groups
 //           pulled in around FRIDAY's island (the rest of the edge is free)
+//   neon    slim and square-cut along the top, a hairline of accent under it
 PanelWindow {
   id: bar
 
@@ -167,8 +168,8 @@ PanelWindow {
   Corner { visible: Theme.keystone && bar.corners; size: 10; leftSide: false; x: notch.x - size; y: -bar.slide }
   Corner { visible: Theme.keystone && bar.corners; size: 10; leftSide: true; x: notch.x + notch.width; y: -bar.slide }
 
-  Corner { visible: !Theme.floating && !Theme.keystone && bar.corners; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
-  Corner { visible: !Theme.floating && !Theme.keystone && bar.corners; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
+  Corner { visible: !Theme.floating && !Theme.keystone && !Theme.sharp && bar.corners; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
+  Corner { visible: !Theme.floating && !Theme.keystone && !Theme.sharp && bar.corners; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
 
   // Blade: the hairline along the bar's lower edge, and the lit part of it
   // under the active workspace (the signal colour while FRIDAY works).
@@ -191,6 +192,19 @@ PanelWindow {
     Behavior on color { ColorAnimation { duration: Theme.medium } }
   }
 
+  // Neon: the hairline, brightest in the middle, gone at the edges.
+  Rectangle {
+    visible: Theme.sharp
+    anchors { left: strip.left; right: strip.right; top: strip.bottom }
+    height: 1
+    gradient: Gradient {
+      orientation: Gradient.Horizontal
+      GradientStop { position: 0; color: "transparent" }
+      GradientStop { position: 0.5; color: Theme.alpha(Theme.accent, 0.55) }
+      GradientStop { position: 1; color: "transparent" }
+    }
+  }
+
   // The island style's pills: one behind each group.
   component Pill: Rectangle {
     required property Item group
@@ -201,7 +215,7 @@ PanelWindow {
     y: strip.y
     width: group.x + group.width - from.x + 20
     height: strip.height
-    radius: height / 2
+    radius: Theme.round(height)
     color: Theme.glass
     border.width: 1
     border.color: Theme.glassEdge

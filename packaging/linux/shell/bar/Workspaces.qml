@@ -89,7 +89,7 @@ Item {
 
   Rectangle {
     anchors.fill: parent
-    radius: height / 2
+    radius: Theme.round(height)
     color: Theme.surface
   }
 
@@ -125,7 +125,7 @@ Item {
 
         Rectangle {
           anchors.fill: parent
-          radius: Math.min(width, height) / 2
+          radius: Theme.sharp ? 2 : Math.min(width, height) / 2
           color: slot.active ? Theme.accent
             : slot.showIcon ? "transparent"
             : slot.used ? Theme.subtext : Theme.overlay

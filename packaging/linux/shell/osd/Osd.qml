@@ -58,7 +58,7 @@ PanelWindow {
   Rectangle {
     id: pill
     anchors.fill: parent
-    radius: height / 2
+    radius: Theme.round(height)
     color: Theme.glass
     border.width: 1
     border.color: Theme.glassEdge

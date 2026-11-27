@@ -171,9 +171,9 @@ Desktop & System Substrate:
   friday shell autohide [on|off]   The bar slides away until the pointer reaches its edge
   friday shell corners [on|off]    The curved corners where the bar meets the screen (off: plain)
   friday shell background [on|off] The bar's own background (off: its parts sit on the wallpaper)
-  friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone, orbit, statusline, glaze, blade, taskbar (lists without a name)
+  friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone, orbit, statusline, glaze, blade, taskbar, neon (lists without a name)
   friday shell preset [name]       A matched style and palette: core, desk, rose, nocturne, mauve (mix them after)
-  friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, walnut, rose, nocturne, mauve, contrast, classic
+  friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, walnut, rose, nocturne, mauve, neon, contrast, classic
   friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
   friday lock                      Lock the screen (hyprlock in FRIDAY's colours)
   friday idle                      Dim, lock and turn the screen off when idle (hypridle)
@@ -223,6 +223,7 @@ shell_window_look() {
     glaze)  gi=6 go=14 bs=1 r=18 ;;
     blade)  gi=5 go=10 bs=1 r=8 ;;
     taskbar) gi=5 go=10 bs=1 r=8 ;;
+    neon)   gi=4 go=8 bs=1 r=2 ;;
     *)      style=ember gi=5 go=10 bs=2 r=10 ;;
   esac
   case "$palette" in
@@ -236,6 +237,7 @@ shell_window_look() {
     rose)    accent=ffb0ca outline=514347 ;;
     nocturne) accent=f7e9a8 outline=3e4166 ;;
     mauve)   accent=cba6f7 outline=45475a ;;
+    neon)    accent=4fd1dc outline=282d38 ;;
     contrast) accent=ffd60a outline=ffffff ;;
     classic|omarchy) accent="" outline="" ;;
     *)       palette=core accent=d42d51 outline=343842 ;;
@@ -444,7 +446,7 @@ friday_lock_conf() {
   local bg text subtext accent signal error warn facepam="${FRIDAY_FACE_PAM:-/etc/pam.d/friday-lock-face}"
   out="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hyprlock.conf"
   palette=$(jq -r '.palette // "core"' "$conf" 2>/dev/null || echo core)
-  case "$palette" in friday) palette=ember ;; core|ember|polar|frost|moss|dawn|walnut|rose|nocturne|mauve|contrast) ;; *) palette=core ;; esac
+  case "$palette" in friday) palette=ember ;; core|ember|polar|frost|moss|dawn|walnut|rose|nocturne|mauve|neon|contrast) ;; *) palette=core ;; esac
   for k in bg text subtext accent signal error warn; do
     printf -v "$k" '%s' "$(friday_palette_colour "$palette" "$k")"
   done
@@ -7823,7 +7825,7 @@ $offer"
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
         key=$1; shift
-        if [ "$key" = style ]; then opts="ember lean island dock rail keystone orbit statusline glaze blade taskbar"; else opts="core ember polar frost moss dawn walnut rose nocturne mauve contrast classic"; fi
+        if [ "$key" = style ]; then opts="ember lean island dock rail keystone orbit statusline glaze blade taskbar neon"; else opts="core ember polar frost moss dawn walnut rose nocturne mauve neon contrast classic"; fi
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
         cur=$(jq -r --arg k "$key" '.[$k] // empty' "$conf" 2>/dev/null || true)
         [ "$cur" = friday ] && cur=ember

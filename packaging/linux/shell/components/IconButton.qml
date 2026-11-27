@@ -29,7 +29,7 @@ Item {
 
   Rectangle {
     anchors.fill: parent
-    radius: height / 2
+    radius: Theme.round(height)
     border.width: root.activeFocus ? 2 : 0
     border.color: Theme.text
     color: root.active ? root.tint
@@ -72,7 +72,7 @@ Item {
       visible: true
       Rectangle {
         anchors.fill: parent
-        radius: height / 2
+        radius: Theme.round(height)
         color: Theme.glass
         border.width: 1
         border.color: Theme.glassEdge

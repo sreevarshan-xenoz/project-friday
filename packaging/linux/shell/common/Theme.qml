@@ -19,6 +19,8 @@ import Quickshell.Io
 //   rose   plum-dark with a soft rose accent, after Caelestia
 //   nocturne  night blue with a pale-gold accent, after Noctalia
 //   mauve  Catppuccin Mocha, HyDE's default
+//   neon   graphite, a muted cyan accent, soft magenta signal: quiet
+//          cyberpunk, not a light show
 //   contrast  high contrast: black, white text and edges, yellow accent,
 //          no see-through glass
 // or "classic": follow the active desktop theme ($XDG_STATE_HOME/omarchy/
@@ -44,6 +46,9 @@ import Quickshell.Io
 //           segments; no glass, no motion in it
 //   keystone  no bar across the screen: one notch hangs from the middle of
 //           the top edge with the workspaces, FRIDAY and the status in it
+//   neon    a slim bar flush with the top, square-cut, with one hairline of
+//           accent along its foot; drawers drop as sharp panels with small
+//           corner brackets (best with the neon palette)
 Singleton {
   id: root
 
@@ -149,6 +154,23 @@ Singleton {
     ok: "#a3be8c"
   })
 
+  readonly property var neon: ({
+    bg: "#0b0c10",
+    surface: "#111319",
+    raised: "#171a22",
+    overlay: "#1e222c",
+    outline: "#282d38",
+    text: "#dfe4ea",
+    subtext: "#a3abb8",
+    faint: "#6c7584",
+    accent: "#4fd1dc",
+    onAccent: "#041417",
+    signal: "#e0457b",
+    error: "#ff5f7a",
+    warn: "#e9b44c",
+    ok: "#5fd39a"
+  })
+
   readonly property var contrast: ({
     bg: "#000000",
     surface: "#0a0a0a",
@@ -239,7 +261,7 @@ Singleton {
   })
 
   readonly property var own: ({ core: core, ember: ember, polar: polar, frost: frost, moss: moss, dawn: dawn, contrast: contrast,
-    walnut: walnut, rose: rose, nocturne: nocturne, mauve: mauve })
+    walnut: walnut, rose: rose, nocturne: nocturne, mauve: mauve, neon: neon })
   readonly property bool highContrast: Config.palette === "contrast"
   readonly property var palette: own[Config.palette] || core
 
@@ -320,6 +342,8 @@ Singleton {
   // Style. `floating` styles keep the bar off the screen edge by `barInset`.
   readonly property string style: Config.style
   readonly property bool floating: style === "island" || style === "dock" || style === "orbit" || style === "glaze"
+  // Square-cut: no rounded corners anywhere, no concave shoulders.
+  readonly property bool sharp: style === "neon"
   // The rail: a column down the left edge instead of a bar along the top.
   readonly property bool rail: style === "rail"
   readonly property int railWidth: 46
@@ -339,10 +363,12 @@ Singleton {
   // Geometry. In the ember style the bar is flush with the top edge and
   // flows into the screen through two concave corners; drawers grow out of
   // it the same way.
-  readonly property int barHeight: statusline ? 24 : taskbar ? 48 : 36
-  readonly property int fillet: 16
-  readonly property int radius: 20
-  readonly property int radiusS: 10
+  readonly property int barHeight: statusline ? 24 : taskbar ? 48 : sharp ? 32 : 36
+  readonly property int fillet: sharp ? 0 : 16
+  readonly property int radius: sharp ? 3 : 20
+  readonly property int radiusS: sharp ? 2 : 10
+  // A pill's rounding: fully round, or square-cut in the neon style.
+  function round(h) { return sharp ? 2 : h / 2; }
   readonly property int gap: 8
   readonly property int pad: 16
 

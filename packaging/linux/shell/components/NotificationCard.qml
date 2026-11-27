@@ -24,7 +24,7 @@ Rectangle {
   readonly property var defaultAction: notification ? notification.actions.find(a => a.identifier === "default") : undefined
 
   implicitHeight: body.implicitHeight + 24
-  radius: 14
+  radius: Theme.sharp ? 3 : 14
   color: compact ? Theme.glassWell : Theme.glass
   border.width: compact ? 0 : 1
   border.color: fromFriday ? Theme.alpha(Theme.accent, 0.45) : Theme.glassEdge

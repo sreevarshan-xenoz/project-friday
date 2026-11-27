@@ -13,7 +13,7 @@ Rectangle {
 
   implicitHeight: 32
   implicitWidth: row.implicitWidth + 24
-  radius: height / 2
+  radius: Theme.round(height)
   color: primary ? (mouse.containsMouse ? Qt.lighter(Theme.accent, 1.08) : Theme.accent)
     : (mouse.containsMouse ? Theme.overlay : Theme.raised)
   Behavior on color { ColorAnimation { duration: Theme.fast } }

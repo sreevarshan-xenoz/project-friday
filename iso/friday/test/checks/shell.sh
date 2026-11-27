@@ -271,9 +271,9 @@ mkdir -p "$HOME/.config/friday"
 # the half of the screen the style puts the bar in (png_colour.py). The bar
 # is frosted glass (Theme.glass: the background at 72%, 80% for the light
 # dawn) over the headless output's black, with no blur here.
-declare -A look_bg=([core]=0c0e11 [ember]=090b0e [polar]=21252e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be [walnut]=c2bdb1 [nocturne]=0f1021)
+declare -A look_bg=([core]=0c0e11 [ember]=090b0e [polar]=21252e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be [walnut]=c2bdb1 [nocturne]=0f1021 [neon]=08090c)
 declare -A line_bg=([core]=181b21)
-for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn orbit:polar statusline:core glaze:frost blade:moss lean:walnut island:nocturne taskbar:core; do
+for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn orbit:polar statusline:core glaze:frost blade:moss lean:walnut island:nocturne taskbar:core neon:neon neon:core; do
   style=${look%%:*} palette=${look##*:}
   # The dock and the shelf are on for these, so they load under every style.
   printf '{ "style": "%s", "palette": "%s", "dock": true, "dockApps": ["foot"], "shelf": true }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"

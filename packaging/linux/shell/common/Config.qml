@@ -14,10 +14,12 @@ import Quickshell.Io
 //                               // gaps, no blur), "island" (three floating
 //                               // pills), "dock" (a floating bar at the bottom)
 //                               // "rail" (a slim column down the left edge)
-//                               // or "keystone" (one notch in the top's middle), "orbit" (two pills, middle clear)
+//                               // "keystone" (one notch in the top's middle), "orbit" (two pills, middle clear)
+//                               // or "neon" (slim, square-cut, a hairline edge)
 //     "palette": "core",        // FRIDAY's own: "core" (the logo's obsidian
 //                               // and red), "ember", "polar", "frost", "moss",
-//                               // "dawn" (light); or "classic" (follow the
+//                               // "dawn" (light), "neon" (graphite, muted
+//                               // cyan); or "classic" (follow the
 //                               // desktop theme). "friday" = "ember"; the old
 //                               // name "omarchy" = "classic".
 //     "clock24h": true,
@@ -45,7 +47,7 @@ Singleton {
   property var featuresOff: []
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
-  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade", "taskbar"]
+  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade", "taskbar", "neon"]
   // A style and palette that go together (Look > Presets, friday shell
   // preset); keep in step with the CLI's list.
   readonly property var presets: [
@@ -55,7 +57,7 @@ Singleton {
     { name: "nocturne", style: "island", palette: "nocturne" },
     { name: "mauve", style: "ember", palette: "mauve" }
   ]
-  readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "walnut", "rose", "nocturne", "mauve", "contrast", "classic"]
+  readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "walnut", "rose", "nocturne", "mauve", "neon", "contrast", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
   readonly property string palette: pick("palette", "core") === "friday" ? "ember" : pick("palette", "core") === "omarchy" ? "classic" : pick("palette", "core")
   readonly property bool clock24h: pick("clock24h", true) === true

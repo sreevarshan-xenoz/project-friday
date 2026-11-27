@@ -125,7 +125,7 @@ PanelWindow {
         Rectangle {
           Layout.fillWidth: true
           implicitHeight: 40
-          radius: 20
+          radius: Theme.sharp ? 3 : 20
           color: Theme.glassWell
           border.width: 1
           border.color: ask.activeFocus ? Theme.accent : Theme.glassEdge
@@ -265,11 +265,11 @@ PanelWindow {
         spacing: 14
         Item {
           implicitWidth: 72; implicitHeight: 72
-          Rectangle { anchors.fill: parent; radius: 16; color: Theme.overlay }
+          Rectangle { anchors.fill: parent; radius: Theme.sharp ? 2 : 16; color: Theme.overlay }
           Glyph { anchors.centerIn: parent; text: Icons.play; size: 26; color: Theme.faint; visible: art.status !== Image.Ready }
           ClippingRectangle {
             anchors.fill: parent
-            radius: 16
+            radius: Theme.sharp ? 2 : 16
             color: "transparent"
             visible: art.status === Image.Ready
             Image {
