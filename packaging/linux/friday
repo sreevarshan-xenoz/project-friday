@@ -1867,7 +1867,7 @@ friday_tool() { # <name> [install|remove|status]
       url="https://github.com/$repo/releases/download/v$ver/$asset"
       tmp=$(mktemp -d) || return 1
       echo "Downloading $name $ver ($asset)..."
-      if ! curl -fL --proto '=https' --retry 2 -o "$tmp/$asset" "$url"; then rm -rf "$tmp"; echo "friday: couldn't download $url" >&2; return 1; fi
+      if ! curl -fsSL --proto '=https' --retry 2 -o "$tmp/$asset" "$url"; then rm -rf "$tmp"; echo "friday: couldn't download $url" >&2; return 1; fi
       got=$(sha256sum "$tmp/$asset" | cut -d' ' -f1)
       if [ "$got" != "$sum" ]; then rm -rf "$tmp"; echo "friday: $name's download doesn't match its pinned checksum; not installed" >&2; return 1; fi
       mkdir -p "$tmp/x" && tar -xzf "$tmp/$asset" -C "$tmp/x" || { rm -rf "$tmp"; echo "friday: couldn't unpack $asset" >&2; return 1; }
