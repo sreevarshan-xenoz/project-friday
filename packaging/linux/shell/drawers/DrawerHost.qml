@@ -91,8 +91,13 @@ PanelWindow {
     Behavior on bodyH { enabled: host.switching; NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
     Behavior on x { enabled: host.switching; NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
 
-    // Ember: room for the shoulders either side. Floating: just the card.
-    readonly property real shoulder: Theme.floating || Theme.rail ? 0 : Theme.fillet
+    // Plain cards (floating styles, the rail, the statusline) or, in the
+    // ember styles, a body with shoulders that grows out of the bar.
+    readonly property bool card: Theme.floating || Theme.rail || Theme.statusline
+    // Ember: room for the shoulders either side. A card: just the card.
+    readonly property real shoulder: card ? 0 : Theme.fillet
+    // A card's distance from the screen's side.
+    readonly property real side: Theme.floating ? Theme.barInset : Theme.statusline ? Theme.gap : -Theme.fillet
 
     width: bodyW + 2 * shoulder
     height: bodyH * host.reveal
@@ -103,17 +108,17 @@ PanelWindow {
     // card keeps the bar's inset from the edge.
     // The rail: every drawer opens beside it, at the top.
     x: Theme.rail ? Theme.gap
-      : host.align === "left" ? (Theme.floating ? Theme.barInset : -Theme.fillet)
-      : host.align === "right" ? host.width - width - (Theme.floating ? Theme.barInset : -Theme.fillet)
+      : host.align === "left" ? side
+      : host.align === "right" ? host.width - width - side
       : Math.round((host.width - width) / 2)
 
     // Swallow clicks on the body so they don't reach the close handler.
     MouseArea { anchors.fill: parent }
 
-    DrawerShape { anchors.fill: parent; visible: !Theme.floating && !Theme.rail }
+    DrawerShape { anchors.fill: parent; visible: !drawer.card }
     Rectangle {
       anchors.fill: parent
-      visible: Theme.floating || Theme.rail
+      visible: drawer.card
       radius: Math.min(Theme.radius, height / 2)
       color: Theme.glass
       border.width: 1

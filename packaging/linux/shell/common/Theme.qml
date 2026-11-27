@@ -30,6 +30,8 @@ import Quickshell.Io
 //   rail    one slim column down the left edge; drawers open beside it
 //   orbit   two floating pills, apps and workspaces at the top left, FRIDAY
 //           and the status at the top right; the middle stays clear
+//   statusline  one slim solid line along the bottom, in terminal-style
+//           segments; no glass, no motion in it
 //   keystone  no bar across the screen: one notch hangs from the middle of
 //           the top edge with the workspaces, FRIDAY and the status in it
 Singleton {
@@ -239,7 +241,9 @@ Singleton {
   readonly property int leftReach: rail ? railWidth : 0
   // The keystone: everything in one notch at the top's middle.
   readonly property bool keystone: style === "keystone"
-  readonly property bool barAtBottom: style === "dock"
+  // The statusline: one slim solid line along the bottom, in segments.
+  readonly property bool statusline: style === "statusline"
+  readonly property bool barAtBottom: style === "dock" || statusline
   readonly property int barInset: floating ? 10 : 0
   // How far from its screen edge the bar's far side is (windows start there).
   readonly property int barReach: rail ? 0 : barHeight + barInset
@@ -247,7 +251,7 @@ Singleton {
   // Geometry. In the ember style the bar is flush with the top edge and
   // flows into the screen through two concave corners; drawers grow out of
   // it the same way.
-  readonly property int barHeight: 36
+  readonly property int barHeight: statusline ? 24 : 36
   readonly property int fillet: 16
   readonly property int radius: 20
   readonly property int radiusS: 10

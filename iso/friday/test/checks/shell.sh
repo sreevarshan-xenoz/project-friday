@@ -272,16 +272,19 @@ mkdir -p "$HOME/.config/friday"
 # is frosted glass (Theme.glass: the background at 72%, 80% for the light
 # dawn) over the headless output's black, with no blur here.
 declare -A look_bg=([core]=0c0e11 [ember]=090b0e [polar]=21252e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be)
-for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn orbit:polar; do
+declare -A line_bg=([core]=181b21)
+for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn orbit:polar statusline:core; do
   style=${look%%:*} palette=${look##*:}
   # The dock and the shelf are on for these, so they load under every style.
   printf '{ "style": "%s", "palette": "%s", "dock": true, "dockApps": ["foot"], "shelf": true }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"
   sleep 3; grim "$W/look-${look/:/-}-bar.png" 2>/dev/null || true
-  half=top; [[ $style == dock ]] && half=bottom; [[ $style == rail ]] && half="0,0,46,900"
+  half=top; [[ $style == dock || $style == statusline ]] && half=bottom; [[ $style == rail ]] && half="0,0,46,900"
+  # The statusline is solid: the palette's surface, not glass.
+  want=${look_bg[$palette]}; [[ $style == statusline ]] && want=${line_bg[$palette]}
   if [[ -s "$W/look-${look/:/-}-bar.png" ]] && need python3; then
-    n=$(python3 "$(dirname "$0")/png_colour.py" "$W/look-${look/:/-}-bar.png" "#${look_bg[$palette]}" "$half" 2>/dev/null || echo 0)
-    if (( n > 3000 )); then pass "$style/$palette: the bar shows it (${n} px of #${look_bg[$palette]} at the $half)"
-    else fail "$style/$palette: the bar doesn't show it (${n} px of #${look_bg[$palette]} at the $half)"; fi
+    n=$(python3 "$(dirname "$0")/png_colour.py" "$W/look-${look/:/-}-bar.png" "#$want" "$half" 2>/dev/null || echo 0)
+    if (( n > 3000 )); then pass "$style/$palette: the bar shows it (${n} px of #$want at the $half)"
+    else fail "$style/$palette: the bar doesn't show it (${n} px of #$want at the $half)"; fi
   fi
   for d in friday control; do
     timeout 10 qs -p "$FS" ipc call shell open "$d" >/dev/null 2>&1 && sleep 1.5 \
