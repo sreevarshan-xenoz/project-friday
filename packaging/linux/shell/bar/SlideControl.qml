@@ -25,15 +25,7 @@ Item {
   Accessible.name: root.tooltip
 
   HoverHandler { id: hover }
-  WheelHandler {
-    // 5% per wheel notch (120); a touchpad's small, many deltas add up to
-    // the same, rather than 5% each. A sideways scroll changes nothing.
-    onWheel: e => {
-      const d = e.angleDelta.y !== 0 ? e.angleDelta.y / 120 : e.pixelDelta.y / 120;
-      if (d !== 0)
-        root.moved(Math.max(0, Math.min(1, root.value + 0.05 * d)));
-    }
-  }
+
 
   Glyph {
     anchors.verticalCenter: parent.verticalCenter
@@ -66,6 +58,19 @@ Item {
       function set(m) { root.moved(Math.max(0, Math.min(1, m.x / width))); }
       onPressed: m => set(m)
       onPositionChanged: m => { if (pressed) set(m); }
+    }
+  }
+
+  // Scrolling over it steps it: 5% per wheel notch (120); a touchpad's small,
+  // many deltas add up to the same, rather than 5% each; a sideways scroll
+  // changes nothing. On top, taking no buttons, so the track still drags.
+  MouseArea {
+    anchors.fill: parent
+    acceptedButtons: Qt.NoButton
+    onWheel: e => {
+      const d = e.angleDelta.y !== 0 ? e.angleDelta.y / 120 : e.pixelDelta.y / 120;
+      if (d !== 0)
+        root.moved(Math.max(0, Math.min(1, root.value + 0.05 * d)));
     }
   }
 }
