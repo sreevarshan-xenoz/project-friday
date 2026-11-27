@@ -28,6 +28,8 @@ import Quickshell.Io
 //   island  three floating pills along the top; drawers are floating cards
 //   dock    one floating bar along the bottom; drawers rise from it
 //   rail    one slim column down the left edge; drawers open beside it
+//   orbit   two floating pills, apps and workspaces at the top left, FRIDAY
+//           and the status at the top right; the middle stays clear
 //   keystone  no bar across the screen: one notch hangs from the middle of
 //           the top edge with the workspaces, FRIDAY and the status in it
 Singleton {
@@ -229,7 +231,7 @@ Singleton {
 
   // Style. `floating` styles keep the bar off the screen edge by `barInset`.
   readonly property string style: Config.style
-  readonly property bool floating: style === "island" || style === "dock"
+  readonly property bool floating: style === "island" || style === "dock" || style === "orbit"
   // The rail: a column down the left edge instead of a bar along the top.
   readonly property bool rail: style === "rail"
   readonly property int railWidth: 46

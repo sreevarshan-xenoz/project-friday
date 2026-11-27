@@ -52,6 +52,9 @@ PanelWindow {
     session: { align: "right", source: "SessionDrawer.qml", dim: true }
   })
   readonly property var spec: specs[shown] || specs.friday
+  // Orbit keeps FRIDAY and the clock in its right pill: what opens from the
+  // middle elsewhere opens under that pill.
+  readonly property string align: Theme.style === "orbit" && spec.align === "center" ? "right" : spec.align
 
   visible: current !== "" || reveal > 0.01
   onVisibleChanged: if (!visible) shown = ""
@@ -100,8 +103,8 @@ PanelWindow {
     // card keeps the bar's inset from the edge.
     // The rail: every drawer opens beside it, at the top.
     x: Theme.rail ? Theme.gap
-      : host.spec.align === "left" ? (Theme.floating ? Theme.barInset : -Theme.fillet)
-      : host.spec.align === "right" ? host.width - width - (Theme.floating ? Theme.barInset : -Theme.fillet)
+      : host.align === "left" ? (Theme.floating ? Theme.barInset : -Theme.fillet)
+      : host.align === "right" ? host.width - width - (Theme.floating ? Theme.barInset : -Theme.fillet)
       : Math.round((host.width - width) / 2)
 
     // Swallow clicks on the body so they don't reach the close handler.
