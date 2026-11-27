@@ -192,7 +192,7 @@ Singleton {
   // its brightness.
   readonly property string wallpaperAccent: {
     const v = Config.pick("wallpaperAccent", "");
-    return Config.featureOn("wallpaper-accent") && !followOmarchy && !highContrast && /^#[0-9a-fA-F]{6}$/.test(v) ? v : "";
+    return Config.featureOn("wallpaper-accent") && Config.palette !== "classic" && !highContrast && /^#[0-9a-fA-F]{6}$/.test(v) ? v : "";
   }
   readonly property color accent: wallpaperAccent || c("accent")
   readonly property color onAccent: wallpaperAccent

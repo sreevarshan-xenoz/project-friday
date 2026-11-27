@@ -22,6 +22,8 @@ PanelWindow {
 
   property bool open: false
   visible: open || fade.running
+  // Still showing: open, or fading out (the pictures stay until it's gone).
+  readonly property bool showing: open || stage.opacity > 0
   property var all: []
   property string folder: ""
   readonly property var shown: folder ? all.filter(p => p.split("/").slice(-2, -1)[0] === folder) : all
@@ -118,6 +120,7 @@ PanelWindow {
 
     // Folders: every picture, or one set.
     Row {
+      z: 2
       anchors.horizontalCenter: parent.horizontalCenter
       y: parent.height * 0.12
       spacing: 8
@@ -132,10 +135,14 @@ PanelWindow {
       }
     }
 
+    // Only the arc's band takes drags, so a click above or below it closes.
     PathView {
       id: arc
-      anchors.fill: parent
-      model: picker.open ? picker.shown : []
+      x: 0
+      y: parent.height * 0.3
+      width: parent.width
+      height: parent.height * 0.45
+      model: picker.showing ? picker.shown : []
       pathItemCount: Math.min(7, count)
       cacheItemCount: 2
       preferredHighlightBegin: 0.5
@@ -147,11 +154,11 @@ PanelWindow {
 
       // A shallow arc that rises to the middle.
       path: Path {
-        startX: -arc.width * 0.05; startY: arc.height * 0.62
+        startX: -arc.width * 0.05; startY: arc.height * 0.71
         PathAttribute { name: "k"; value: 0 }
-        PathQuad { x: arc.width * 0.5; y: arc.height * 0.47; controlX: arc.width * 0.25; controlY: arc.height * 0.48 }
+        PathQuad { x: arc.width * 0.5; y: arc.height * 0.38; controlX: arc.width * 0.25; controlY: arc.height * 0.4 }
         PathAttribute { name: "k"; value: 1 }
-        PathQuad { x: arc.width * 1.05; y: arc.height * 0.62; controlX: arc.width * 0.75; controlY: arc.height * 0.48 }
+        PathQuad { x: arc.width * 1.05; y: arc.height * 0.71; controlX: arc.width * 0.75; controlY: arc.height * 0.4 }
         PathAttribute { name: "k"; value: 0 }
       }
 

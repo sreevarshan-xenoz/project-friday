@@ -3027,7 +3027,15 @@ if command -v magick >/dev/null 2>&1; then
   "${dk_env[@]}" bash "$F" shell palette polar >/dev/null
   if jq -e '.wallpaperAccent' "$HOME/.config/friday/shell.json" >/dev/null; then fail "choosing a palette kept the wallpaper's accent"
   else pass "choosing a palette drops the wallpaper's accent"; fi
+  "${dk_env[@]}" bash "$F" wallpaper "$blue" >/dev/null
+  "${dk_env[@]}" bash "$F" shell palette contrast >/dev/null
+  jq --arg a "$wa" '.wallpaperAccent = $a' "$HOME/.config/friday/shell.json" >"$HOME/sj" && mv "$HOME/sj" "$HOME/.config/friday/shell.json"
+  "${dk_env[@]}" bash "$F" feature wallpaper-accent on >/dev/null
+  contains "the contrast palette keeps its own borders" "$(cat "$HOME/.config/friday/hypr-look.lua")" "rgba(ffd60aee)"
+  "${dk_env[@]}" bash "$F" shell palette polar >/dev/null
+  "${dk_env[@]}" bash "$F" wallpaper "$blue" >/dev/null
   "${dk_env[@]}" bash "$F" feature wallpaper-accent off >/dev/null
+  contains "switching it off puts the palette's borders back" "$(cat "$HOME/.config/friday/hypr-look.lua")" "rgba(88c0d0ee)"
   "${dk_env[@]}" bash "$F" wallpaper "$blue" >/dev/null
   if jq -e '.wallpaperAccent' "$HOME/.config/friday/shell.json" >/dev/null; then fail "wallpaper-accent off still set an accent"
   else pass "with wallpaper-accent off, the palette's accent stays"; fi

@@ -222,7 +222,7 @@ shell_window_look() {
     *)       palette=core accent=d42d51 outline=343842 ;;
   esac
   local wa; wa=$(jq -r '.wallpaperAccent // empty' "$conf" 2>/dev/null || true)
-  if [ -n "$accent" ] && [[ "$wa" =~ ^#[0-9a-fA-F]{6}$ ]] && friday_feature_on wallpaper-accent; then accent=${wa#\#}; fi
+  if [ -n "$accent" ] && [ "$palette" != contrast ] && [[ "$wa" =~ ^#[0-9a-fA-F]{6}$ ]] && friday_feature_on wallpaper-accent; then accent=${wa#\#}; fi
   {
     echo "-- FRIDAY Shell's look for windows (style: $style, palette: $palette)."
     echo "-- Written by \`friday shell style|palette\`; edits are replaced on the next change."
@@ -5152,7 +5152,9 @@ friday_feature() {
         on) [ ! -f "$f" ] || { grep -vxF -- "$name" "$f" >"$f.$$" || true; mv -f "$f.$$" "$f"; }; echo "$name: on" ;;
         off) mkdir -p "$(dirname "$f")"; friday_feature_on "$name" && echo "$name" >>"$f"; echo "$name: off" ;;
         *) echo "Usage: friday feature [list | <name> status|on|off]" >&2; return 1 ;;
-      esac ;;
+      esac
+      # The window borders follow the wallpaper's accent or the palette's.
+      if [ "$name" = wallpaper-accent ] && [ "${2:-status}" != status ]; then shell_window_look; fi ;;
   esac
 }
 
