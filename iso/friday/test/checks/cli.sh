@@ -1067,6 +1067,36 @@ printf 'vault words' | CLIPBOARD_STATE=sensitive bash "$F" clips add
 if grep -q "vault words" "$CLIPS"; then fail "kept a clip marked sensitive"; else pass "a clip marked sensitive isn't kept"; fi
 printf '   ' | bash "$F" clips add
 expect "blank text isn't kept" test "$(wc -l <"$CLIPS")" -eq 2
+# CTX-14: a password or key left on the clipboard is cleared (here after 1 s
+# instead of 2 minutes), clips on or off; anything copied since is left.
+cg="$W/clipguard"; mkdir -p "$cg"
+printf '#!/bin/bash\n[[ "$*" == *--list-types* ]] && { echo text/plain; exit 0; }\ncat %q\n' "$cg/now" >"$cg/wl-paste"
+printf '#!/bin/bash\necho "wl-copy $*" >> %q\n' "$cg/log" >"$cg/wl-copy"; chmod +x "$cg/wl-paste" "$cg/wl-copy"
+cg_try() { # <copied> <on the clipboard at the end> [env...]
+  : >"$cg/log"; printf '%s' "$1" >"$cg/now"
+  printf '%s' "$1" | env PATH="$cg:$PATH" FRIDAY_CLIPGUARD_SECONDS=1 "${@:3}" bash "$F" clipguard check
+  printf '%s' "$2" >"$cg/now"; sleep 2
+}
+cg_try 'hunter2Secret99xyz' 'hunter2Secret99xyz'
+contains "a password-shaped copy is cleared after the wait" "$(cat "$cg/log")" "wl-copy --clear"
+cg_try $'ghp_0123456789abcdefABCDEF\n' $'ghp_0123456789abcdefABCDEF\n'
+contains "also when it was copied with a line break" "$(cat "$cg/log")" "wl-copy --clear"
+cg_try 'vault words' 'vault words' CLIPBOARD_STATE=sensitive
+contains "a copy a password manager marks sensitive is cleared" "$(cat "$cg/log")" "wl-copy --clear"
+cg_try 'hunter2Secret99xyz' 'a note copied since'
+if [ -s "$cg/log" ]; then fail "clipguard cleared something copied after the password"; else pass "something copied since is left alone"; fi
+cg_try 'just some ordinary words' 'just some ordinary words'
+if [ -s "$cg/log" ]; then fail "clipguard cleared an ordinary copy"; else pass "an ordinary copy is left alone"; fi
+bash "$F" feature clipboard-clear off >/dev/null
+cg_try 'hunter2Secret99xyz' 'hunter2Secret99xyz'
+if [ -s "$cg/log" ]; then fail "clipguard cleared with clipboard-clear off"; else pass "with clipboard-clear off nothing is cleared"; fi
+bash "$F" feature clipboard-clear on >/dev/null
+# Switched off while a timer waits: that one is left too.
+: >"$cg/log"; printf '%s' 'hunter2Secret99xyz' >"$cg/now"
+printf '%s' 'hunter2Secret99xyz' | env PATH="$cg:$PATH" FRIDAY_CLIPGUARD_SECONDS=1 bash "$F" clipguard check
+bash "$F" feature clipboard-clear off >/dev/null; sleep 2
+if [ -s "$cg/log" ]; then fail "a waiting timer cleared after clipboard-clear went off"; else pass "turning it off stops a waiting timer"; fi
+bash "$F" feature clipboard-clear on >/dev/null
 for i in $(seq 1 205); do printf '{"ts":1,"text":"old %s"}\n' "$i"; done >"$CLIPS"
 printf 'newest' | bash "$F" clips add
 expect "only the last 200 are kept" test "$(wc -l <"$CLIPS")" -eq 200
