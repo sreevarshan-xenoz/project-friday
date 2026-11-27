@@ -85,6 +85,7 @@ Autonomous Agent & Cognitive Loop:
   friday retention                 How long each kind of record FRIDAY keeps stays
   friday day [today|yesterday|YYYY-MM-DD|forget <date|all>]  A short summary of a day by project, kept here
   friday dictations [copy <n>|clear]  The last 20 voice-typed texts, to get one back
+  friday llmfit [install|remove|status]  The tool behind friday local-ai fit (pinned, checksum-verified)
   friday obscura [install|remove|status]  A light browser FRIDAY reads web pages with (pinned, checksum-verified)
   friday sounds [on|off]           Quiet sounds for listening, an answer done, one that failed
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
@@ -1862,6 +1863,7 @@ friday_tool() { # <name> [install|remove|status]
       ver=$(jq -r --arg n "$name" '.[$n].version // empty' "$json")
       repo=$(jq -r --arg n "$name" '.[$n].repo // empty' "$json")
       asset=$(jq -r --arg n "$name" '.[$n].assets["linux-x86_64"].name // empty' "$json")
+      asset=${asset//\{version\}/$ver}
       sum=$(jq -r --arg n "$name" '.[$n].assets["linux-x86_64"].sha256 // empty' "$json")
       [ -n "$ver" ] && [ -n "$asset" ] && [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || { echo "friday: $name isn't in the tools list" >&2; return 1; }
       [ "$(uname -m)" = x86_64 ] || { echo "friday: $name is only offered for x86_64 here" >&2; return 1; }
@@ -1872,8 +1874,11 @@ friday_tool() { # <name> [install|remove|status]
       got=$(sha256sum "$tmp/$asset" | cut -d' ' -f1)
       if [ "$got" != "$sum" ]; then rm -rf "$tmp"; echo "friday: $name's download doesn't match its pinned checksum; not installed" >&2; return 1; fi
       mkdir -p "$tmp/x" && tar -xzf "$tmp/$asset" -C "$tmp/x" || { rm -rf "$tmp"; echo "friday: couldn't unpack $asset" >&2; return 1; }
-      [ -x "$tmp/x/$name" ] || { rm -rf "$tmp"; echo "friday: $asset has no $name in it" >&2; return 1; }
-      rm -rf "$dir"; mkdir -p "$(dirname "$dir")" && mv "$tmp/x" "$dir"; rm -rf "$tmp"
+      # The program at the top of the archive or in its one folder.
+      local top="$tmp/x"
+      [ -x "$top/$name" ] || top=$(find "$tmp/x" -mindepth 2 -maxdepth 2 -type f -name "$name" -perm -u+x -printf '%h\n' 2>/dev/null | head -1)
+      [ -n "$top" ] && [ -x "$top/$name" ] || { rm -rf "$tmp"; echo "friday: $asset has no $name in it" >&2; return 1; }
+      rm -rf "$dir"; mkdir -p "$(dirname "$dir")" && mv "$top" "$dir"; rm -rf "$tmp"
       echo "$name $ver installed in $dir (checksum verified)." ;;
     *) echo "Usage: friday $name [install|remove|status]" >&2; return 2 ;;
   esac
@@ -5989,6 +5994,30 @@ friday_setup_local() {
   friday_local_ai_install --engine "$engine" --budget "$budget"
 }
 
+# friday local-ai fit [general|coding|chat|reasoning|multimodal]: the five
+# models Ollama has that fit this computer best for that use, as llmfit (friday llmfit
+# install) measures this hardware: size, how well it fits, a speed guess, and
+# the Ollama name to use it with (friday local-ai use ollama <name>).
+friday_local_ai_fit() {
+  local use="$1" bin json
+  case "$use" in general|coding|chat|reasoning|multimodal) ;; *) echo "usage: friday local-ai fit [general|coding|chat|reasoning|multimodal]" >&2; return 2 ;; esac
+  bin="$(friday_tool_dir llmfit)/llmfit"
+  [ -x "$bin" ] || { echo "This needs llmfit, which measures this computer: friday llmfit install"; return 1; }
+  # Plenty, so five Ollama can pull are left after the rest are dropped;
+  # "general" looks at every kind (llmfit's own general bucket is mostly
+  # models Ollama doesn't have).
+  local filter=(--use-case "$use"); [ "$use" = general ] && filter=()
+  json=$(timeout 90 "$bin" recommend --json --limit 1000 "${filter[@]}" 2>/dev/null) || { echo "friday: llmfit couldn't size this computer" >&2; return 1; }
+  jq -r --arg use "$use" '
+    # Each Ollama name once, in the order llmfit ranks them.
+    .models = reduce (.models[] | select(.ollama_name != null)) as $m ([];
+      if any(.[]; .ollama_name == $m.ollama_name) then . else . + [$m] end) |
+    "Best local models for \($use) here (\(.system.cpu_name // "this CPU"), \(.system.total_ram_gb // 0) GB RAM\(if .system.has_gpu then ", " + (.system.gpu_name // "a GPU") else "" end)):",
+    (.models[:5][] | "  \(.ollama_name)  \(.parameter_count), \(.fit_label | ascii_downcase) fit, ~\(.estimated_tps) tok/s, \(.disk_size_gb) GB\(if .installed then ", already here" else "" end)"),
+    (if (.models | length) == 0 then "  none that Ollama has fit well here; cloud answers work anyway" else empty end),
+    "Use one with: friday local-ai use ollama <name>"' <<<"$json"
+}
+
 friday_local_ai() {
   local sub="${1:-presets}"
   case "$sub" in
@@ -6006,7 +6035,8 @@ friday_local_ai() {
     bench) friday_local_ai_bench_cmd ;;
     engines) shift; friday-ctl local-ai engines "$@" ;;
     use) shift; friday_local_ai_use "$@" ;;
-    *) echo "usage: friday local-ai [detect|presets [engine]|models [engine]|summary|install|status|engines|use|order|bench|off|packages]" >&2; return 2 ;;
+    fit) friday_local_ai_fit "${2:-general}" ;;
+    *) echo "usage: friday local-ai [detect|presets [engine]|models [engine]|summary|install|status|engines|use|fit [use]|order|bench|off|packages]" >&2; return 2 ;;
   esac
 }
 
@@ -7581,6 +7611,10 @@ $offer"
   obscura)
     # A small headless browser for reading pages, from its pinned release.
     shift; friday_tool obscura "$@"; exit $?
+    ;;
+  llmfit)
+    # Which local models fit this computer, from its pinned release.
+    shift; friday_tool llmfit "$@"; exit $?
     ;;
   sounds)
     # Quiet cues for listening, done and failed (off unless turned on).

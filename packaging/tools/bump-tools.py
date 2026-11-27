@@ -51,6 +51,10 @@ def smoke(tool: dict[str, Any], name: str, path: str, version: str) -> None:
         with tarfile.open(path) as t:
             t.extractall(d, filter="data")
         exe = os.path.join(d, name)
+        if not os.path.exists(exe):  # the program in the archive's one folder
+            for sub in os.listdir(d):
+                if os.path.isfile(os.path.join(d, sub, name)):
+                    exe = os.path.join(d, sub, name)
         # The new build runs with nothing secret in reach (CI also runs this
         # in a job with a read-only token and no saved credentials).
         env = {
@@ -94,14 +98,15 @@ def main() -> int:
             with tempfile.TemporaryDirectory() as d:
                 sums = {}
                 for plat, a in tool["assets"].items():
-                    url = f"https://github.com/{tool['repo']}/releases/download/v{new}/{a['name']}"
+                    asset = a["name"].replace("{version}", new)
+                    url = f"https://github.com/{tool['repo']}/releases/download/v{new}/{asset}"
                     data = get(url, "application/octet-stream")
                     sums[plat] = hashlib.sha256(data).hexdigest()
-                    with open(os.path.join(d, a["name"]), "wb") as f:
+                    with open(os.path.join(d, asset), "wb") as f:
                         f.write(data)
                 linux = tool["assets"].get("linux-x86_64")
                 if linux:
-                    smoke(tool, name, os.path.join(d, linux["name"]), new)
+                    smoke(tool, name, os.path.join(d, linux["name"].replace("{version}", new)), new)
             for plat, h in sums.items():
                 tool["assets"][plat]["sha256"] = h
             summary.append(
