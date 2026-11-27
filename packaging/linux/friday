@@ -164,7 +164,7 @@ Desktop & System Substrate:
   friday shell overview            Every workspace with its windows (Super+Tab)
   friday shell wallpaper           Pick a wallpaper (Super+Ctrl+T)
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
-  friday shell style [name]        Shell style: ember, lean, island, dock (lists without a name)
+  friday shell style [name]        Shell style: ember, lean, island, dock, rail (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
   friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
   friday lock                      Lock the screen (hyprlock in FRIDAY's colours)
@@ -208,6 +208,7 @@ shell_window_look() {
     lean)   gi=3 go=6 bs=1 r=6 ;;
     island) gi=6 go=14 bs=2 r=16 ;;
     dock)   gi=8 go=16 bs=1 r=20 ;;
+    rail)   gi=5 go=10 bs=2 r=10 ;;
     *)      style=ember gi=5 go=10 bs=2 r=10 ;;
   esac
   case "$palette" in
@@ -7651,7 +7652,7 @@ $offer"
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
         key=$1; shift
-        if [ "$key" = style ]; then opts="ember lean island dock"; else opts="core ember polar frost moss dawn contrast classic"; fi
+        if [ "$key" = style ]; then opts="ember lean island dock rail"; else opts="core ember polar frost moss dawn contrast classic"; fi
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
         cur=$(jq -r --arg k "$key" '.[$k] // empty' "$conf" 2>/dev/null || true)
         [ "$cur" = friday ] && cur=ember

@@ -23,6 +23,7 @@ PanelWindow {
   anchors { top: true; bottom: true; left: true; right: true }
   margins.top: Theme.barAtBottom ? 0 : Theme.barReach
   margins.bottom: Theme.barAtBottom ? Theme.barReach : 0
+  margins.left: Theme.leftReach
   exclusionMode: ExclusionMode.Ignore
   color: "transparent"
   WlrLayershell.namespace: "friday-desktop"

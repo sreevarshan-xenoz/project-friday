@@ -14,6 +14,8 @@ Rectangle {
   id: root
 
   signal clicked()
+  // Stacked top to bottom (the rail style).
+  property bool vertical: false
 
   readonly property var adapter: Bluetooth.defaultAdapter
   readonly property var battery: UPower.displayDevice
@@ -21,8 +23,8 @@ Rectangle {
   readonly property bool charging: hasBattery && battery.state === UPowerDeviceState.Charging
   readonly property int pct: hasBattery ? Math.round(battery.percentage * 100) : 0
 
-  implicitWidth: row.implicitWidth + 22
-  implicitHeight: 24
+  implicitWidth: vertical ? 28 : row.implicitWidth + 22
+  implicitHeight: vertical ? row.implicitHeight + 20 : 24
   radius: height / 2
   color: mouse.containsMouse ? Theme.raised : Theme.surface
   Behavior on color { ColorAnimation { duration: Theme.fast } }
@@ -50,10 +52,14 @@ Rectangle {
     onTriggered: { recallCheck.running = true; wakeCheck.running = true; }
   }
 
-  RowLayout {
+  GridLayout {
     id: row
     anchors.centerIn: parent
-    spacing: 10
+    flow: root.vertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+    rows: root.vertical ? -1 : 1
+    columns: root.vertical ? 1 : -1
+    rowSpacing: 10
+    columnSpacing: 10
 
     Glyph {
       visible: root.listening
@@ -99,9 +105,13 @@ Rectangle {
       text: Icons.settings
       size: 15
     }
-    RowLayout {
+    GridLayout {
       visible: root.hasBattery
-      spacing: 3
+      flow: root.vertical ? GridLayout.TopToBottom : GridLayout.LeftToRight
+      rows: root.vertical ? -1 : 1
+      columns: root.vertical ? 1 : -1
+      rowSpacing: 1
+      columnSpacing: 3
       Glyph {
         text: root.charging ? Icons.batteryCharging : root.pct > 60 ? Icons.battery
           : root.pct > 20 ? Icons.batteryHalf : Icons.batteryLow
