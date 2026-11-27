@@ -26,6 +26,14 @@ PanelWindow {
   WlrLayershell.namespace: "friday-bar"
   WlrLayershell.layer: WlrLayer.Top
 
+  // Dark or light text for a block of colour c: by its relative luminance,
+  // the one with more contrast (at least 4.5:1 on every palette's signal
+  // and error colours).
+  function ink(c) {
+    const f = x => x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b) > 0.18 ? "#16181d" : "#f4f5f7";
+  }
+
   // A powerline chevron, drawn (font glyphs don't meet the blocks exactly):
   // a triangle in `from`'s colour pointing right, into what follows, or left.
   component Chevron: Shape {
@@ -72,7 +80,9 @@ PanelWindow {
     spacing: 0
     Segment {
       color: Friday.mode === "working" ? Theme.signal : Friday.mode === "ready" ? Theme.accent : Theme.error
-      fg: Theme.onAccent
+      // onAccent is matched to the accent only: on the signal or error
+      // colour, dark or light text, whichever reads better on it.
+      fg: Friday.mode === "ready" ? Theme.onAccent : line.ink(color)
       label: "FRIDAY " + Friday.mode.toUpperCase()
       onAct: Shell.toggle("friday", line.modelData.name)
     }
