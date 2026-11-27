@@ -470,6 +470,25 @@ pub fn find(question: &str, s: &Sources) -> Vec<Excerpt> {
 
 /// Kinds of file read from a chosen folder (PDFs through `pdftotext`).
 const FOLDER_TEXT: &[&str] = &["md", "txt", "org", "rst", "adoc", "tex"];
+/// Office and e-book files read as their text through anydoc.
+pub const DOC_KINDS: &[&str] = &["docx", "pptx", "xlsx", "odt", "odp", "ods", "rtf", "epub"];
+
+/// The largest document read (anydoc reads the whole file into memory).
+const DOC_FILE_MAX: u64 = 50_000_000;
+
+/// A document's text as Markdown (anydoc), at most `max` characters; None
+/// when it can't be read, has no text, or is over 50 MB.
+pub fn doc_text(path: &std::path::Path, max: usize) -> Option<String> {
+    if std::fs::metadata(path).ok()?.len() > DOC_FILE_MAX {
+        return None;
+    }
+    let md = anydoc::to_markdown(path).ok()?;
+    let md = md.trim();
+    if md.is_empty() {
+        return None;
+    }
+    Some(clip(md, max).to_string())
+}
 /// The most text kept from one file, and from all of them, in bytes.
 const FILE_BYTES: usize = 1_000_000;
 const FOLDERS_BYTES: usize = 50_000_000;
@@ -547,6 +566,8 @@ pub fn prepare_folders(
                 })
                 .ok()
                 .map(|_| String::from_utf8_lossy(&buf).into_owned())
+        } else if DOC_KINDS.contains(&ext.as_str()) {
+            doc_text(&path, FILE_BYTES)
         } else if ext == "pdf" {
             Command::new("pdftotext")
                 .arg(&path)
@@ -634,6 +655,40 @@ mod tests {
         assert!(file.text.contains("first Monday"), "{}", file.text);
         let all = std::fs::read_to_string(&s.folders).unwrap();
         assert!(!all.contains("salary"), "a private folder was indexed");
+    }
+
+    const PLAN_DOCX: &[u8] = include_bytes!("testdata/plan.docx");
+
+    #[test]
+    fn a_document_is_read_as_its_text() {
+        let (dir, _) = fixture();
+        let doc = dir.join("plan.docx");
+        std::fs::write(&doc, PLAN_DOCX).unwrap();
+        let text = doc_text(&doc, 8000).expect("the document's text");
+        assert!(text.contains("third of March"), "{text}");
+        assert_eq!(
+            doc_text(&doc, 6).unwrap().chars().count(),
+            7,
+            "cut to the limit, with an ellipsis"
+        );
+        let fake = dir.join("fake.docx");
+        std::fs::write(&fake, "not a document").unwrap();
+        assert_eq!(doc_text(&fake, 8000), None);
+    }
+
+    #[test]
+    fn documents_in_chosen_folders_are_searched() {
+        let (dir, s) = fixture();
+        let notes = dir.join("docs");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::write(notes.join("plan.docx"), PLAN_DOCX).unwrap();
+        let n = prepare_folders(std::slice::from_ref(&notes), &[], &s.folders).unwrap();
+        assert_eq!(n, 1);
+        let all = std::fs::read_to_string(&s.folders).unwrap();
+        assert!(
+            all.contains("plan.docx") && all.contains("third of March"),
+            "{all}"
+        );
     }
 
     fn sources(dir: &Path) -> Sources {

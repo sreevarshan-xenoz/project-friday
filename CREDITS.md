@@ -23,4 +23,5 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [Omarchy](https://github.com/basecamp/omarchy) | MIT | FRIDAY OS's Hyprland base, pinned in `iso/friday/fetch-omarchy.sh` |
 | [agent-desktop](https://github.com/vercel-labs/agent-desktop) | Apache-2.0 | `friday-git` and the MSI (`agent-desktop-LICENSE` beside it) |
 | [obscura](https://github.com/h4ckf0r0day/obscura) | Apache-2.0 | downloaded on request (`friday obscura install`), a pinned release in `packaging/tools/tools.json` |
+| [anydoc](https://github.com/firecrawl/anydoc) | MIT | linked into friday-ctl and the daemon: documents read as text (`@file`, chosen folders) |
 | [tiny-voca](https://github.com/n4ze3m/tiny-voca), [dizione](https://github.com/n4ze3m/dizione) | Apache-2.0 | voice (`services/mobile/src/tinyvoca`, see its NOTICE) |

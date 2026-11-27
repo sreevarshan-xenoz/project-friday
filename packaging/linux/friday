@@ -6479,15 +6479,18 @@ case "${1:-}" in
       given_dir=$(dirname -- "$(realpath -s -m -- "$mention_file")")
       mention_file=$(realpath -e -- "$mention_file" 2>/dev/null || true)
       # A PDF is read as its text (pdftotext, from poppler), its first 20 pages.
-      mention_pdf=false
+      mention_pdf=false mention_doc=false
       [[ "${mention_file,,}" == *.pdf && -r "$mention_file" ]] && mention_pdf=true
+      # Word, PowerPoint, Excel, OpenDocument, RTF and EPUB: their text, read
+      # here by friday-ctl (anydoc).
+      case "${mention_file,,}" in *.docx|*.pptx|*.xlsx|*.odt|*.odp|*.ods|*.rtf|*.epub) [ -r "$mention_file" ] && mention_doc=true ;; esac
       case "${mention_file,,}" in
         *.png|*.jpg|*.jpeg|*.webp|*.gif)
           notify "FRIDAY" "I can't read a picture from a file yet: open it, then ask about the screen (Super+Ctrl+Y)."
           exit 0 ;;
       esac
-      if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || { ! $mention_pdf && ! grep -Iq . "$mention_file" 2>/dev/null; }; then
-        notify "FRIDAY" "@file needs a text file or a PDF I can read."
+      if [ ! -f "$mention_file" ] || [ ! -r "$mention_file" ] || { ! $mention_pdf && ! $mention_doc && ! grep -Iq . "$mention_file" 2>/dev/null; }; then
+        notify "FRIDAY" "@file needs a text file, a PDF or a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB) I can read."
         exit 0
       fi
       case "${mention_file##*/}" in
@@ -6505,9 +6508,10 @@ case "${1:-}" in
         notify "FRIDAY" "Reading a PDF needs pdftotext: sudo pacman -S poppler"
         exit 0
       fi
-      if $mention_pdf; then context=$(timeout 20 pdftotext -l 20 -q -- "$mention_file" - 2>/dev/null | head -c 8000 || true)
+      if $mention_doc; then context=$(timeout 20 friday-ctl doc-text "$mention_file" 8000 2>/dev/null || true)
+      elif $mention_pdf; then context=$(timeout 20 pdftotext -l 20 -q -- "$mention_file" - 2>/dev/null | head -c 8000 || true)
       else context=$(head -c 8000 -- "$mention_file"); fi
-      [ -n "${context//[[:space:]]/}" ] || { notify "FRIDAY" "That file has no text I can read (a scanned PDF has only pictures)."; exit 0; }
+      [ -n "${context//[[:space:]]/}" ] || { notify "FRIDAY" "That file has no text I can read (a scanned PDF has only pictures; a document may be damaged or locked)."; exit 0; }
       if friday_secret_shaped "$context"; then
         notify "FRIDAY" "That file looks like a password or token, so I won't send it."
         exit 0
