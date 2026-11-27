@@ -1453,7 +1453,7 @@ good=$(sha256sum "$TL/good.tar.gz" | cut -d' ' -f1)
 jq -n --arg s "$good" '{obscura: {repo: "example/obscura", version: "9.9.9", assets: {"linux-x86_64": {name: "o.tar.gz", sha256: $s}}}}' >"$TL/tools.json"
 # curl stands in for the download: it copies $TOOL_SRC to the -o path.
 [ -e "$S/curl" ] && mv "$S/curl" "$S/curl.keep"
-printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { cp "$TOOL_SRC" "$2"; exit 0; }; shift; done\nexit 1\n' >"$S/curl"; chmod +x "$S/curl"
+printf '#!/bin/sh\necho "$*" >>"%s/curl.args"\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { cp "$TOOL_SRC" "$2"; exit 0; }; shift; done\nexit 1\n' "$TL" >"$S/curl"; chmod +x "$S/curl"
 TD="$W/tooldata"
 if [ "$(uname -m)" = x86_64 ]; then
   out=$(XDG_DATA_HOME="$TD" FRIDAY_TOOLS_JSON="$TL/tools.json" TOOL_SRC="$TL/good.tar.gz" bash "$F" obscura install 2>&1)
@@ -1472,13 +1472,17 @@ fi
   out=$(XDG_DATA_HOME="$TD/3" FRIDAY_TOOLS_JSON="$TL/tools2.json" TOOL_SRC="$TL/nested.tar.gz" bash "$F" llmfit install 2>&1)
   contains "tools: a version-named archive with the program in a folder installs" "$out" "checksum verified"
   [ -x "$TD/3/friday/llmfit/llmfit" ] && pass "tools: the program lands at the top of its folder" || fail "tools: llmfit isn't at $TD/3/friday/llmfit/llmfit"
+  contains "tools: {version} in an asset name becomes the pinned version" "$(cat "$TL/curl.args")" "releases/download/v2.0.0/llmfit-v2.0.0-x86_64.tar.gz"
 rm -f "$S/curl"; [ -e "$S/curl.keep" ] && mv "$S/curl.keep" "$S/curl"
 jq -e '.obscura.assets["linux-x86_64"].sha256 | test("^[0-9a-f]{64}$")' "$REPO_ROOT/packaging/tools/tools.json" >/dev/null \
   && pass "tools.json pins obscura by checksum" || fail "tools.json has no checksum for obscura"
+jq -e '.llmfit.assets["linux-x86_64"].sha256 | test("^[0-9a-f]{64}$")' "$REPO_ROOT/packaging/tools/tools.json" >/dev/null \
+  && pass "tools.json pins llmfit by checksum" || fail "tools.json has no checksum for llmfit"
 echo "local-ai fit (llmfit)"
 LF="$W/lfdata/friday/llmfit"; mkdir -p "$LF"
-cat >"$LF/llmfit" <<'LFEOF'
+cat >"$LF/llmfit" <<LFEOF
 #!/bin/sh
+echo "\$*" >"$W/lfdata/args"
 cat <<'JSON'
 {"system": {"cpu_name": "Test CPU", "total_ram_gb": 16, "has_gpu": false},
  "models": [
@@ -1489,7 +1493,11 @@ cat <<'JSON'
 JSON
 LFEOF
 chmod +x "$LF/llmfit"
-out=$(XDG_DATA_HOME="$W/lfdata" bash "$F" local-ai fit)
+out=$(XDG_DATA_HOME="$W/lfdata" bash "$F" local-ai fit 2>&1)
+if [[ "$out" == *"jq:"* || "$out" == *error* ]]; then fail "fit: printed an error: $out"; else pass "fit: no errors"; fi
+contains "fit: asks llmfit for plenty, every kind for general" "$(cat "$W/lfdata/args")" "recommend --json --limit 1000"
+XDG_DATA_HOME="$W/lfdata" bash "$F" local-ai fit coding >/dev/null 2>&1
+contains "fit: coding asks llmfit for coding models" "$(cat "$W/lfdata/args")" "--use-case coding"
 contains "fit: names the computer" "$out" "Test CPU, 16 GB RAM"
 contains "fit: lists a model Ollama can pull, once" "$out" "qwen3:4b  4B, good fit, ~20.5 tok/s, 2.5 GB, already here"
 if [[ "$out" == *no-ollama* ]] || (( $(grep -c "qwen3:4b" <<<"$out") != 1 )); then fail "fit: listed a model Ollama can't pull, or one twice"; else pass "fit: only Ollama models, each once"; fi

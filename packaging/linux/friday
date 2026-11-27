@@ -6015,7 +6015,8 @@ friday_local_ai_fit() {
     "Best local models for \($use) here (\(.system.cpu_name // "this CPU"), \(.system.total_ram_gb // 0) GB RAM\(if .system.has_gpu then ", " + (.system.gpu_name // "a GPU") else "" end)):",
     (.models[:5][] | "  \(.ollama_name)  \(.parameter_count), \(.fit_label | ascii_downcase) fit, ~\(.estimated_tps) tok/s, \(.disk_size_gb) GB\(if .installed then ", already here" else "" end)"),
     (if (.models | length) == 0 then "  none that Ollama has fit well here; cloud answers work anyway" else empty end),
-    "Use one with: friday local-ai use ollama <name>"' <<<"$json"
+    "Use one with: friday local-ai use ollama <name>"' <<<"$json" 2>/dev/null \
+    || { echo "friday: llmfit answered in a form FRIDAY doesn't read (a new llmfit?)" >&2; return 1; }
 }
 
 friday_local_ai() {
