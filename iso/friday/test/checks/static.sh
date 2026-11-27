@@ -82,7 +82,7 @@ F_CLI="$REPO_ROOT/packaging/linux/friday"
 THEME_QML="$REPO_ROOT/packaging/linux/shell/common/Theme.qml"
 # The window borders use the palettes' accent and outline: the CLI's copy of
 # them must match Theme.qml.
-for pal in core ember polar frost moss dawn contrast; do
+for pal in core ember polar frost moss dawn walnut rose nocturne mauve contrast; do
   block=$(sed -n "/readonly property var $pal: ({/,/})/p" "$THEME_QML")
   acc=$(grep -oE 'accent: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')
   out=$(grep -oE 'outline: "#[0-9a-f]{6}"' <<<"$block" | grep -oE '[0-9a-f]{6}')

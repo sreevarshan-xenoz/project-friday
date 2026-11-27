@@ -15,6 +15,10 @@ import Quickshell.Io
 //   frost  cool slate, ice-blue accent, lilac signal
 //   moss   dark olive, lichen-green accent, amber signal
 //   dawn   light: warm paper, rust accent, deep-teal signal
+//   walnut light: paper and walnut, after DEsk
+//   rose   plum-dark with a soft rose accent, after Caelestia
+//   nocturne  night blue with a pale-gold accent, after Noctalia
+//   mauve  Catppuccin Mocha, HyDE's default
 //   contrast  high contrast: black, white text and edges, yellow accent,
 //          no see-through glass
 // or "classic": follow the active desktop theme ($XDG_STATE_HOME/omarchy/
@@ -160,7 +164,80 @@ Singleton {
     ok: "#5ee36a"
   })
 
-  readonly property var own: ({ core: core, ember: ember, polar: polar, frost: frost, moss: moss, dawn: dawn, contrast: contrast })
+  // After DEsk's paper-and-walnut desk (fyzugx/DEsk, see CREDITS.md): light.
+  readonly property var walnut: ({
+    bg: "#f3ecdd",
+    surface: "#efe6d3",
+    raised: "#e7dcc4",
+    overlay: "#e0cca5",
+    outline: "#c4ad86",
+    text: "#2b2116",
+    subtext: "#5c4a36",
+    faint: "#8a7a62",
+    accent: "#85592a",
+    onAccent: "#fffaf0",
+    signal: "#2f5d7c",
+    error: "#b23a2a",
+    warn: "#a86f00",
+    ok: "#4d7a3a"
+  })
+
+  // After caelestia-dots/shell's default scheme (see CREDITS.md).
+  readonly property var rose: ({
+    bg: "#191114",
+    surface: "#22191c",
+    raised: "#2b2124",
+    overlay: "#3c3235",
+    outline: "#514347",
+    text: "#efdfe2",
+    subtext: "#d5c2c6",
+    faint: "#9e8c91",
+    accent: "#ffb0ca",
+    onAccent: "#541d34",
+    signal: "#f0bc95",
+    error: "#ffb4ab",
+    warn: "#e8c07d",
+    ok: "#9fd49a"
+  })
+
+  // After noctalia-shell's default "Noctalia" palette (see CREDITS.md).
+  readonly property var nocturne: ({
+    bg: "#15162e",
+    surface: "#20213d",
+    raised: "#292b49",
+    overlay: "#33355a",
+    outline: "#3e4166",
+    text: "#ece9f4",
+    subtext: "#a5a7c6",
+    faint: "#8487ab",
+    accent: "#f7e9a8",
+    onAccent: "#302c1e",
+    signal: "#a0ddc0",
+    error: "#ed8296",
+    warn: "#f3c98b",
+    ok: "#a5d19c"
+  })
+
+  // Catppuccin Mocha, HyDE's default theme (see CREDITS.md).
+  readonly property var mauve: ({
+    bg: "#1e1e2e",
+    surface: "#262637",
+    raised: "#313244",
+    overlay: "#45475a",
+    outline: "#45475a",
+    text: "#cdd6f4",
+    subtext: "#bac2de",
+    faint: "#9399b2",
+    accent: "#cba6f7",
+    onAccent: "#1e1e2e",
+    signal: "#94e2d5",
+    error: "#f38ba8",
+    warn: "#f9e2af",
+    ok: "#a6e3a1"
+  })
+
+  readonly property var own: ({ core: core, ember: ember, polar: polar, frost: frost, moss: moss, dawn: dawn, contrast: contrast,
+    walnut: walnut, rose: rose, nocturne: nocturne, mauve: mauve })
   readonly property bool highContrast: Config.palette === "contrast"
   readonly property var palette: own[Config.palette] || core
 
