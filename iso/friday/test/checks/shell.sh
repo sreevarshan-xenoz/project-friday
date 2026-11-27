@@ -272,7 +272,7 @@ mkdir -p "$HOME/.config/friday"
 # is frosted glass (Theme.glass: the background at 72%, 80% for the light
 # dawn) over the headless output's black, with no blur here.
 declare -A look_bg=([core]=0c0e11 [ember]=090b0e [polar]=21252e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be)
-for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn; do
+for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn orbit:polar; do
   style=${look%%:*} palette=${look##*:}
   # The dock and the shelf are on for these, so they load under every style.
   printf '{ "style": "%s", "palette": "%s", "dock": true, "dockApps": ["foot"], "shelf": true }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"

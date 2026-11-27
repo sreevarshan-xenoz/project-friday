@@ -18,6 +18,7 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | app icons in the workspaces (`bar/Workspaces.qml`, Look > Workspace icons) |
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | the dock: pinned and running apps, up when the pointer reaches the bottom edge (`desktop/Dock.qml`) |
 | [Deepender25/Edge-Drop](https://github.com/Deepender25/Edge-Drop) | Apache-2.0 | the shelf on the screen edge: drop files or text to keep them (`desktop/Shelf.qml`) |
+| [duxlabs-dev/dux-shell](https://github.com/duxlabs-dev/dux-shell), [43PR/dotfiles](https://github.com/43PR/dotfiles) | MIT | the orbit bar style: two floating pills, the middle left clear (an idea, `bar/Bar.qml`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 

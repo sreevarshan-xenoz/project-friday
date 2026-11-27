@@ -21,7 +21,9 @@ PanelWindow {
   required property ShellScreen modelData
   screen: modelData
 
-  readonly property bool island: Theme.style === "island"
+  // Pill styles: island (three pills) and orbit (two, the middle left clear).
+  readonly property bool island: Theme.style === "island" || orbit
+  readonly property bool orbit: Theme.style === "orbit"
 
   // Auto-hide (Look > Auto-hide bar; shell.json "barAutoHide"; off unless
   // turned on): the bar slides off its edge and windows get the space; the
@@ -116,10 +118,12 @@ PanelWindow {
   // The island style's pills: one behind each group.
   component Pill: Rectangle {
     required property Item group
+    // Where the pill starts, if left of its group (orbit: FRIDAY's island).
+    property Item from: group
     visible: bar.island && Config.barBackground
-    x: group.x - 10
+    x: from.x - 10
     y: strip.y
-    width: group.width + 20
+    width: group.x + group.width - from.x + 20
     height: strip.height
     radius: height / 2
     color: Theme.glass
@@ -127,7 +131,7 @@ PanelWindow {
     border.color: Theme.glassEdge
   }
   Pill { id: leftPill; group: leftGroup }
-  Pill { id: rightPill; group: rightGroup }
+  Pill { id: rightPill; group: rightGroup; from: bar.orbit ? centre : rightGroup }
 
   // Left.
   RowLayout {
@@ -151,7 +155,7 @@ PanelWindow {
       onClicked: Shell.toggle("launcher", bar.modelData.name)
     }
     Workspaces { id: workspaces; screen: bar.modelData }
-    WindowTitle { visible: !Theme.keystone; Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
+    WindowTitle { visible: !Theme.keystone && !bar.orbit; Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
   }
 
   // Centre: the aperture island (bar/Island.qml), centred on the bar but
@@ -162,7 +166,9 @@ PanelWindow {
     screenName: bar.modelData.name
     growUp: Theme.barAtBottom
     y: strip.y + 4
-    x: Theme.keystone ? Math.round(strip.x + strip.width / 2 - width / 2)
+    // Orbit: in the right pill, just before the status.
+    x: bar.orbit ? Math.round(rightGroup.x - width - 14)
+      : Theme.keystone ? Math.round(strip.x + strip.width / 2 - width / 2)
       : Math.round(Math.max(leftGroup.x + workspaces.x + workspaces.width + 24,
       strip.x + strip.width / 2 - width / 2))
   }

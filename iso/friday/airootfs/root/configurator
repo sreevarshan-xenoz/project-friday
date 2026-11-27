@@ -420,7 +420,8 @@ step_look() {
       "Island (floating pills along the top)" \
       "Dock (floating bar along the bottom)" \
       "Rail (a slim column down the left edge)" \
-      "Keystone (one notch in the middle of the top edge)") && SHELL_STYLE="$v"
+      "Keystone (one notch in the middle of the top edge)" \
+      "Orbit (two floating pills, the middle left clear)") && SHELL_STYLE="$v"
     friday_ok "$SHELL_STYLE"
   fi
   echo
