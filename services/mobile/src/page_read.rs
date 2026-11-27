@@ -80,8 +80,9 @@ impl Default for DefaultPageReader {
     }
 }
 
-/// The obscura binary: `FRIDAY_OBSCURA`, then where `friday obscura install`
-/// puts it, then the PATH.
+/// The obscura binary: `FRIDAY_OBSCURA`, else the copy `friday obscura
+/// install` put in FRIDAY's data folder (checked against its pinned
+/// checksum). Never a stray `obscura` found on the PATH.
 pub fn obscura_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("FRIDAY_OBSCURA").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(p)).filter(|p| p.is_file());
@@ -98,16 +99,8 @@ pub fn obscura_path() -> Option<PathBuf> {
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    if let Some(p) = base.map(|b| b.join("friday").join("obscura").join(exe)) {
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths)
-            .map(|d| d.join(exe))
-            .find(|p| p.is_file())
-    })
+    base.map(|b| b.join("friday").join("obscura").join(exe))
+        .filter(|p| p.is_file())
 }
 
 /// What obscura printed, as a page: the first heading is the title. A
@@ -115,7 +108,8 @@ pub fn obscura_path() -> Option<PathBuf> {
 /// stdout with exit 0, so it's an error here.
 fn obscura_page(url: &str, markdown: &str) -> Result<Page, String> {
     let text = markdown.trim();
-    if text.contains("Forbidden redirect target") || text.contains("is not allowed") {
+    // Only obscura's own short refusal, not a page that happens to say so.
+    if text.len() < 300 && text.contains("Forbidden redirect target") {
         return Err(
             "the page sent me to an address on your own network, so I didn't read it".into(),
         );
@@ -221,7 +215,9 @@ impl PageReader for DefaultPageReader {
             return Err("only web addresses (http, https) can be read".into());
         }
         let bin = self.obscura.clone().or_else(obscura_path);
-        let light = match bin.filter(|_| crate::features::on("obscura-reader")) {
+        // A stand-in given by a test is used whatever this computer's switches say.
+        let on = self.obscura.is_some() || crate::features::on("obscura-reader");
+        let light = match bin.filter(|_| on) {
             Some(bin) => {
                 tokio::time::timeout(Duration::from_secs(15), self.with_obscura(&bin, url))
                     .await

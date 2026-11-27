@@ -1853,7 +1853,7 @@ friday_tool() { # <name> [install|remove|status]
   dir=$(friday_tool_dir "$name"); json=$(friday_tools_json)
   case "${2:-status}" in
     status)
-      if [ -x "$dir/$name" ]; then echo "$name: installed ($("$dir/$name" --version 2>/dev/null | head -1)), in $dir"
+      if [ -x "$dir/$name" ]; then echo "$name: installed ($("$dir/$name" --version 2>/dev/null | sed -n 1p)), in $dir"
       else echo "$name: not installed (friday $name install)"; fi ;;
     remove) rm -rf "$dir"; echo "$name: removed." ;;
     install)

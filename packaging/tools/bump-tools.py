@@ -41,12 +41,15 @@ def smoke(tool, name, path, version):
         with tarfile.open(path) as t:
             t.extractall(d, filter="data")
         exe = os.path.join(d, name)
-        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60).stdout
+        # The new build runs with nothing secret in reach (CI also runs this
+        # in a job with a read-only token and no saved credentials).
+        env = {k: v for k, v in os.environ.items() if "TOKEN" not in k and not k.startswith(("GITHUB_", "ACTIONS_"))}
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60, env=env).stdout
         if version not in out:
             raise RuntimeError(f"--version says {out.strip()!r}, not {version}")
         s = tool.get("smoke")
         if s:
-            r = subprocess.run([exe] + s["args"], capture_output=True, text=True, timeout=120)
+            r = subprocess.run([exe] + s["args"], capture_output=True, text=True, timeout=120, env=env)
             if s["expect"] not in r.stdout:
                 raise RuntimeError(f"smoke test: {s['expect']!r} not in its output")
 
