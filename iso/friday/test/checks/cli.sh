@@ -601,6 +601,9 @@ contains "and its status says so" "$(bash "$F" feature instant-answers status)" 
 bash "$F" feature instant-answers on >/dev/null
 contains "and on again" "$(bash "$F" feature list)" "on   instant-answers"
 refuse "an unknown feature is refused" bash "$F" feature nosuchthing off
+# Each switch once (a merge that keeps both sides can list one twice).
+dups=$(bash "$F" feature list | awk '{print $2}' | sort | uniq -d | tr '\n' ' ')
+if [[ -z "$dups" ]]; then pass "each switch is listed once"; else fail "switches listed twice: $dups"; fi
 # Public free tiers (LAI-6): opt-in with a red warning, the guard a switch.
 : >"$LOG"; bash "$F" ask "what is a monad"; sleep 0.3
 contains "a plain typed question is marked typed" "$(cat "$LOG")" "friday-ctl-typed"
