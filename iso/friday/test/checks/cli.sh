@@ -1453,7 +1453,7 @@ good=$(sha256sum "$TL/good.tar.gz" | cut -d' ' -f1)
 jq -n --arg s "$good" '{obscura: {repo: "example/obscura", version: "9.9.9", assets: {"linux-x86_64": {name: "o.tar.gz", sha256: $s}}}}' >"$TL/tools.json"
 # curl stands in for the download: it copies $TOOL_SRC to the -o path.
 [ -e "$S/curl" ] && mv "$S/curl" "$S/curl.keep"
-printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { cp "$TOOL_SRC" "$2"; exit 0; }; shift; done\nexit 1\n' >"$S/curl"; chmod +x "$S/curl"
+printf '#!/bin/sh\necho "$*" >>"%s/curl.args"\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { cp "$TOOL_SRC" "$2"; exit 0; }; shift; done\nexit 1\n' "$TL" >"$S/curl"; chmod +x "$S/curl"
 TD="$W/tooldata"
 if [ "$(uname -m)" = x86_64 ]; then
   out=$(XDG_DATA_HOME="$TD" FRIDAY_TOOLS_JSON="$TL/tools.json" TOOL_SRC="$TL/good.tar.gz" bash "$F" obscura install 2>&1)
@@ -1465,9 +1465,43 @@ if [ "$(uname -m)" = x86_64 ]; then
   if [ -e "$TD/2/friday/obscura/obscura" ]; then fail "tools: a refused download was installed anyway"; else pass "tools: a refused download leaves nothing behind"; fi
   contains "tools: remove" "$(XDG_DATA_HOME="$TD" bash "$F" obscura remove)" "removed"
 fi
+  # An archive named with its version, the program in its one folder (llmfit's).
+  mkdir -p "$TL/nest/llmfit-v2.0.0-x86_64"; printf '#!/bin/sh\necho "llmfit 2.0.0"\n' >"$TL/nest/llmfit-v2.0.0-x86_64/llmfit"; chmod +x "$TL/nest/llmfit-v2.0.0-x86_64/llmfit"
+  tar -czf "$TL/nested.tar.gz" -C "$TL/nest" llmfit-v2.0.0-x86_64
+  jq -n --arg s "$(sha256sum "$TL/nested.tar.gz" | cut -d' ' -f1)" '{llmfit: {repo: "example/llmfit", version: "2.0.0", assets: {"linux-x86_64": {name: "llmfit-v{version}-x86_64.tar.gz", sha256: $s}}}}' >"$TL/tools2.json"
+  out=$(XDG_DATA_HOME="$TD/3" FRIDAY_TOOLS_JSON="$TL/tools2.json" TOOL_SRC="$TL/nested.tar.gz" bash "$F" llmfit install 2>&1)
+  contains "tools: a version-named archive with the program in a folder installs" "$out" "checksum verified"
+  [ -x "$TD/3/friday/llmfit/llmfit" ] && pass "tools: the program lands at the top of its folder" || fail "tools: llmfit isn't at $TD/3/friday/llmfit/llmfit"
+  contains "tools: {version} in an asset name becomes the pinned version" "$(cat "$TL/curl.args")" "releases/download/v2.0.0/llmfit-v2.0.0-x86_64.tar.gz"
 rm -f "$S/curl"; [ -e "$S/curl.keep" ] && mv "$S/curl.keep" "$S/curl"
 jq -e '.obscura.assets["linux-x86_64"].sha256 | test("^[0-9a-f]{64}$")' "$REPO_ROOT/packaging/tools/tools.json" >/dev/null \
   && pass "tools.json pins obscura by checksum" || fail "tools.json has no checksum for obscura"
+jq -e '.llmfit.assets["linux-x86_64"].sha256 | test("^[0-9a-f]{64}$")' "$REPO_ROOT/packaging/tools/tools.json" >/dev/null \
+  && pass "tools.json pins llmfit by checksum" || fail "tools.json has no checksum for llmfit"
+echo "local-ai fit (llmfit)"
+LF="$W/lfdata/friday/llmfit"; mkdir -p "$LF"
+cat >"$LF/llmfit" <<LFEOF
+#!/bin/sh
+echo "\$*" >"$W/lfdata/args"
+cat <<'JSON'
+{"system": {"cpu_name": "Test CPU", "total_ram_gb": 16, "has_gpu": false},
+ "models": [
+  {"name": "org/no-ollama", "ollama_name": null, "parameter_count": "1B", "fit_label": "Perfect", "estimated_tps": 50, "disk_size_gb": 1, "installed": false},
+  {"name": "qwen", "ollama_name": "qwen3:4b", "parameter_count": "4B", "fit_label": "Good", "estimated_tps": 20.5, "disk_size_gb": 2.5, "installed": true},
+  {"name": "qwen-dup", "ollama_name": "qwen3:4b", "parameter_count": "4B", "fit_label": "Good", "estimated_tps": 20.5, "disk_size_gb": 2.5, "installed": false}
+ ]}
+JSON
+LFEOF
+chmod +x "$LF/llmfit"
+out=$(XDG_DATA_HOME="$W/lfdata" bash "$F" local-ai fit 2>&1)
+if [[ "$out" == *"jq:"* || "$out" == *error* ]]; then fail "fit: printed an error: $out"; else pass "fit: no errors"; fi
+contains "fit: asks llmfit for plenty, every kind for general" "$(cat "$W/lfdata/args")" "recommend --json --limit 1000"
+XDG_DATA_HOME="$W/lfdata" bash "$F" local-ai fit coding >/dev/null 2>&1
+contains "fit: coding asks llmfit for coding models" "$(cat "$W/lfdata/args")" "--use-case coding"
+contains "fit: names the computer" "$out" "Test CPU, 16 GB RAM"
+contains "fit: lists a model Ollama can pull, once" "$out" "qwen3:4b  4B, good fit, ~20.5 tok/s, 2.5 GB, already here"
+if [[ "$out" == *no-ollama* ]] || (( $(grep -c "qwen3:4b" <<<"$out") != 1 )); then fail "fit: listed a model Ollama can't pull, or one twice"; else pass "fit: only Ollama models, each once"; fi
+contains "fit: without llmfit it says how to get it" "$(XDG_DATA_HOME="$W/none" bash "$F" local-ai fit 2>&1)" "friday llmfit install"
 echo "region ask"
 printf '#!/bin/sh\n[ -n "$SLURP_CANCEL" ] && exit 1\necho "10,20 300x200"\n' >"$S/slurp"; chmod +x "$S/slurp"
 : >"$LOG"; PICK="what is this chart" bash "$F" ask --region; sleep 0.3
