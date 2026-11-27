@@ -22,7 +22,8 @@ PanelWindow {
   readonly property bool island: Theme.style === "island"
 
   anchors { top: !Theme.barAtBottom; bottom: Theme.barAtBottom; left: true; right: true }
-  implicitHeight: Theme.floating ? Theme.barReach : Theme.barHeight + Theme.fillet
+  // Room for the island to open below the bar (it's masked, so clicks pass).
+  implicitHeight: (Theme.floating ? Theme.barReach : Theme.barHeight + Theme.fillet) + 40
   exclusiveZone: Theme.floating ? Theme.barReach : Theme.barHeight
   color: "transparent"
   WlrLayershell.namespace: "friday-bar"
@@ -33,7 +34,7 @@ PanelWindow {
   mask: Region {
     item: bar.island ? null : strip
     Region { item: bar.island ? leftPill : null }
-    Region { item: bar.island ? centrePill : null }
+    Region { item: centre.capsule }
     Region { item: bar.island ? rightPill : null }
   }
 
@@ -69,7 +70,6 @@ PanelWindow {
     border.color: Theme.glassEdge
   }
   Pill { id: leftPill; group: leftGroup }
-  Pill { id: centrePill; group: centre }
   Pill { id: rightPill; group: rightGroup }
 
   // Left.
@@ -90,72 +90,16 @@ PanelWindow {
     WindowTitle { Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
   }
 
-  // Centre: the orb (FRIDAY drawer) and what it's doing, then the clock
-  // (calendar drawer). The clock stays at the bar's centre, right above the
-  // calendar drawer; what FRIDAY is doing grows to its left.
-  RowLayout {
+  // Centre: the aperture island (bar/Island.qml), centred on the bar but
+  // never over the apps button and workspaces on a narrow screen. It drops
+  // below the bar (or rises above the dock) when it opens.
+  Island {
     id: centre
-    anchors.verticalCenter: strip.verticalCenter
-    // ...but never over the apps button and workspaces on a narrow screen:
-    // there the clock gives way to the right instead.
+    screenName: bar.modelData.name
+    growUp: Theme.barAtBottom
+    y: strip.y + 4
     x: Math.round(Math.max(leftGroup.x + workspaces.x + workspaces.width + 24,
-      strip.x + strip.width / 2 - clock.implicitWidth / 2 - fridayButton.implicitWidth - spacing))
-    spacing: 12
-
-    Rectangle {
-      id: fridayButton
-      implicitHeight: 26
-      implicitWidth: fridayRow.implicitWidth + 14
-      radius: height / 2
-      color: Shell.isOpen("friday", bar.modelData.name) ? Theme.raised
-        : fridayMouse.containsMouse ? Theme.surface : "transparent"
-      Behavior on color { ColorAnimation { duration: Theme.fast } }
-      Behavior on implicitWidth { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
-      clip: true
-
-      RowLayout {
-        id: fridayRow
-        anchors.verticalCenter: parent.verticalCenter
-        x: 7
-        spacing: 8
-        Orb { size: 18 }
-        Label {
-          visible: Friday.mode !== "ready"
-          Layout.maximumWidth: 320
-          text: Friday.mode === "working" ? (Friday.phase || "working") + (Friday.goal ? " · " + Friday.goal : "")
-            : Friday.mode === "stopped" ? "FRIDAY " + Friday.status : "FRIDAY offline"
-          color: Friday.mode === "working" ? Theme.accent : Theme.subtext
-          font.pixelSize: Theme.fontS + 1
-          font.weight: Font.Medium
-        }
-      }
-      MouseArea {
-        id: fridayMouse
-        anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: Shell.toggle("friday", bar.modelData.name)
-      }
-    }
-
-    // The digits roll when they change (components/RollingText.qml).
-    RollingText {
-      id: clock
-      text: Qt.formatDateTime(time.date, Config.clock24h ? "ddd d MMM   HH:mm" : "ddd d MMM   h:mm AP")
-      family: Theme.mono
-      pixelSize: Theme.fontM
-      weight: Font.Medium
-      color: clockMouse.containsMouse || Shell.isOpen("calendar", bar.modelData.name) ? Theme.accent : Theme.text
-      SystemClock { id: time; precision: SystemClock.Minutes }
-      MouseArea {
-        id: clockMouse
-        anchors.fill: parent
-        anchors.margins: -6
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: Shell.toggle("calendar", bar.modelData.name)
-      }
-    }
+      strip.x + strip.width / 2 - width / 2))
   }
 
   // Right.
