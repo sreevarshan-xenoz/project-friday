@@ -34,7 +34,7 @@ PanelWindow {
   WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   function toggle() {
-    if (!hyprland) return;
+    if (!hyprland || (!open && !Config.featureOn("workspace-overview"))) return;
     if (!open) { Hyprland.refreshToplevels(); picked = activeId; }
     open = !open;
   }
