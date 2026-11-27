@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Services.Pipewire
 import Quickshell.Wayland
 import qs.common
 import qs.components
@@ -143,6 +144,37 @@ PanelWindow {
           tooltip: "Stop"
           onClicked: Friday.cancel()
         }
+      }
+
+      // The microphone's level while FRIDAY listens (switch: mic-level): a
+      // thin bar that moves with your voice, so you can see it hears you.
+      // The meter runs only while listening; a muted mic says so instead.
+      Item {
+        id: micBar
+        readonly property bool on: Answer.state === "listening" && Config.featureOn("mic-level")
+        Layout.fillWidth: true
+        Layout.preferredHeight: 4
+        visible: on
+        PwNodePeakMonitor {
+          id: peakMon
+          node: Audio.source
+          // Only the pill on screen listens: one meter, not one per screen.
+          enabled: micBar.on && win.visible && !Audio.micMuted
+        }
+        Rectangle { anchors.fill: parent; radius: 2; color: Theme.alpha(Theme.text, 0.1) }
+        Rectangle {
+          height: parent.height
+          radius: 2
+          color: Audio.micMuted ? Theme.error : Theme.accent
+          // (Quickshell already scales peak for display: a cube root.)
+          width: Audio.micMuted ? parent.width : parent.width * Math.min(1, peakMon.peak)
+        }
+      }
+      Label {
+        visible: micBar.on && Audio.micMuted
+        text: "Your microphone is muted"
+        color: Theme.error
+        font.pixelSize: Theme.fontS
       }
 
       // What went with the question, before the first word.
