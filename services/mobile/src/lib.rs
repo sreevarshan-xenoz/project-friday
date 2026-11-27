@@ -73,6 +73,35 @@ pub mod web_search;
 pub mod win_insert;
 pub mod workspace;
 
+/// Where FRIDAY keeps its small runtime files (pid files): `$XDG_RUNTIME_DIR`,
+/// which is this user's own; without one, a `friday-<uid>` folder in the
+/// temp folder, made private, so another user on the computer can't plant a
+/// pid file there that FRIDAY would then stop. (Windows' temp folder is
+/// already per user.)
+pub fn runtime_dir() -> std::path::PathBuf {
+    if let Some(d) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        return std::path::PathBuf::from(d);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        // SAFETY: getuid has no preconditions and can't fail.
+        let uid = unsafe { libc::getuid() };
+        let d = std::env::temp_dir().join(format!("friday-{uid}"));
+        let _ = std::fs::DirBuilder::new().mode(0o700).create(&d);
+        match std::fs::symlink_metadata(&d) {
+            Ok(m) if m.is_dir() && m.uid() == uid => {
+                let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+                d
+            }
+            // Someone else's, or not a folder: nowhere shared.
+            _ => std::env::temp_dir().join(format!("friday-{uid}-{}", std::process::id())),
+        }
+    }
+    #[cfg(not(unix))]
+    std::env::temp_dir()
+}
+
 /// The next message from a broadcast receiver, or `None` once it is closed. A receiver
 /// that fell behind skips what it missed and carries on: `while let Ok(..) = rx.recv()`
 /// would end the loop (and with it the goal runner) the first time the bus overflowed.

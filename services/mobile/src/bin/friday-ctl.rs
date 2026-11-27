@@ -95,10 +95,7 @@ fn confirm_context_consent() -> bool {
 fn watch(args: &[String]) -> std::process::ExitCode {
     use friday_mobile::watch::{self as w, Kitty, Region, RegionEvent};
     use std::process::{Command, ExitCode, Stdio};
-    let pidfile = std::path::PathBuf::from(
-        std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()),
-    )
-    .join("friday-watch.pid");
+    let pidfile = friday_mobile::runtime_dir().join("friday-watch.pid");
     // The watch running now, if any (the pid file names a live process).
     let running = std::fs::read_to_string(&pidfile)
         .ok()

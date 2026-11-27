@@ -1246,10 +1246,7 @@ mod wave_out {
 /// One speaker at a time: where the running `say` records its process id, so a
 /// new one (or `--stop`) can end it.
 pub fn pid_file() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("friday-say.pid")
+    crate::runtime_dir().join("friday-say.pid")
 }
 
 /// Whether an answer is being spoken now: a `say` recorded its pid and is alive.
