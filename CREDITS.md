@@ -15,6 +15,7 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [Gakuseei/Ricelin](https://github.com/Gakuseei/Ricelin) | MIT | the keystone bar style: everything in one notch at the top's middle (`bar/Bar.qml`) |
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | CPU and memory readouts in the bar, warning lines at 90% and 95% (`bar/ResourcesChip.qml`, switch `bar-resources`) |
 | [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | app icons in the workspaces (`bar/Workspaces.qml`, Look > Workspace icons) |
+| [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | the dock: pinned and running apps, up when the pointer reaches the bottom edge (`desktop/Dock.qml`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 

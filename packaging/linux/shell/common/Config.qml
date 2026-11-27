@@ -27,6 +27,9 @@ import Quickshell.Io
 //                               // the desktop wallpaper, which `friday wallpaper`
 //                               // sets and swaybg draws (FRIDAY OS); unset = your
 //                               // own tool does; the lock screen shows it too
+//     "dock": true,             // a dock along the bottom, up when the pointer
+//                               // reaches the edge (off unless turned on);
+//     "dockApps": ["firefox"],  // its pinned apps, as desktop entry ids
 //     "polkit": true            // FRIDAY Shell asks for administrator passwords
 //                               // (FRIDAY OS); off = your desktop's agent does
 //   }
@@ -52,6 +55,8 @@ Singleton {
   readonly property bool polkit: pick("polkit", false) === true
   // The workspaces show their apps' icons (off unless turned on).
   readonly property bool workspaceIcons: pick("workspaceIcons", false) === true
+  // The dock along the bottom (off unless turned on).
+  readonly property bool dock: pick("dock", false) === true
 
   function pick(key, fallback) {
     const v = root.settings[key];
