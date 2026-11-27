@@ -51,6 +51,20 @@ DEFAULT_BROWSER="${DEFAULT_BROWSER:-chromium}"
 # claude codex gemini agy cline kilo) to install; see friday_app_source.
 EDITORS="${EDITORS:-}"
 AGENTS="${AGENTS:-}"
+# Everyday defaults (one each; "none" for no video, image or PDF app) and
+# more apps (ids; see friday_app_source).
+FILE_MANAGER="${FILE_MANAGER:-nautilus}"
+TERMINAL_APP="${TERMINAL_APP:-kitty}"
+VIDEO_PLAYER="${VIDEO_PLAYER:-mpv}"
+IMAGE_VIEWER="${IMAGE_VIEWER:-loupe}"
+PDF_VIEWER="${PDF_VIEWER:-papers}"
+MORE_APPS="${MORE_APPS:-}"
+# Git identity (~/.gitconfig) and whether FRIDAY backs up to a private
+# GitHub repo (set up at first login: it needs a browser to sign in).
+GIT_NAME="${GIT_NAME:-}"
+GIT_EMAIL="${GIT_EMAIL:-}"
+GITHUB_USER="${GITHUB_USER:-}"
+GITHUB_BACKUP="${GITHUB_BACKUP:-false}"
 # Local AI: ollama|llamacpp, its memory budget and model (friday local-ai presets).
 FRIDAY_LOCAL_ENGINE="${FRIDAY_LOCAL_ENGINE:-}"
 FRIDAY_LOCAL_BUDGET_MB="${FRIDAY_LOCAL_BUDGET_MB:-}"
@@ -419,19 +433,51 @@ friday_app_source() { # <id> -> repo:<pkg> | aur:<pkg> | npm:<pkg> | agy
     agy) echo agy ;;
     cline) echo npm:cline ;;
     kilo) echo npm:@kilocode/cli ;;
+    # Everyday apps (Nautilus, Kitty, Foot and Alacritty are always there).
+    thunar) echo "repo:thunar gvfs tumbler" ;;
+    dolphin) echo repo:dolphin ;;
+    nemo) echo repo:nemo ;;
+    yazi) echo repo:yazi ;;
+    ghostty) echo repo:ghostty ;;
+    wezterm) echo repo:wezterm ;;
+    mpv) echo repo:mpv ;;
+    vlc) echo repo:vlc ;;
+    celluloid) echo repo:celluloid ;;
+    loupe) echo repo:loupe ;;
+    imv) echo repo:imv ;;
+    gwenview) echo repo:gwenview ;;
+    papers) echo repo:papers ;;
+    zathura) echo "repo:zathura zathura-pdf-mupdf" ;;
+    okular) echo repo:okular ;;
+    # More apps.
+    libreoffice) echo repo:libreoffice-fresh ;;
+    onlyoffice) echo aur:onlyoffice-bin ;;
+    obsidian) echo repo:obsidian ;;
+    bitwarden) echo repo:bitwarden ;;
+    keepassxc) echo repo:keepassxc ;;
+    discord) echo repo:discord ;;
+    telegram) echo repo:telegram-desktop ;;
+    signal) echo repo:signal-desktop ;;
+    slack) echo aur:slack-desktop ;;
+    thunderbird) echo repo:thunderbird ;;
+    spotify) echo repo:spotify-launcher ;;
+    obs) echo repo:obs-studio ;;
   esac
 }
 user_apps=()
 # VS Code and Code - OSS conflict: with both picked, VS Code wins.
 [[ " ${EDITORS:-} " == *" vscode "* ]] && EDITORS=$(sed 's/\(^\| \)code\( \|$\)/ /' <<<" $EDITORS " | xargs)
-for app in ${EDITORS:-} ${AGENTS:-}; do
+for app in ${EDITORS:-} ${AGENTS:-} ${FILE_MANAGER:-} ${TERMINAL_APP:-} ${VIDEO_PLAYER:-} ${IMAGE_VIEWER:-} ${PDF_VIEWER:-} ${MORE_APPS:-}; do
   src=$(friday_app_source "$app")
   case "$src" in
-    repo:*) browser_pkgs+=("${src#repo:}") ;;
+    repo:*) read -r -a pkgs <<<"${src#repo:}"; browser_pkgs+=("${pkgs[@]}") ;;
     aur:*) aur_pkgs+=("${src#aur:}") ;;
     npm:*|agy) user_apps+=("$src") ;;
   esac
 done
+# Git for an identity; GitHub's CLI and age for encrypted GitHub backups.
+[[ -n "${GIT_NAME:-}${GIT_EMAIL:-}${GITHUB_USER:-}" ]] && browser_pkgs+=(git)
+[[ "${GITHUB_BACKUP:-false}" == true ]] && browser_pkgs+=(git github-cli age)
 # npm-installed agents need Node.
 for src in "${user_apps[@]}"; do [[ $src == npm:* ]] && { browser_pkgs+=(nodejs npm); break; }; done
 if (( ${#browser_pkgs[@]} )); then
@@ -855,6 +901,74 @@ friday_default_browser() {
   sed -i "/^\[Default Applications\]/a text/html=$desktop\nx-scheme-handler/http=$desktop\nx-scheme-handler/https=$desktop" "$f"
 }
 friday_default_browser "/mnt$USER_HOME" "$DEFAULT_BROWSER"
+
+# The everyday apps picked open their kinds of file (mimeapps.list), the
+# terminal picked comes first for xdg-terminal-exec, and Super+E opens the
+# file manager picked.
+friday_mime_default() { # <home> <desktop file> <mime type>...
+  local f="$1/.config/mimeapps.list" desktop="$2" t
+  shift 2
+  mkdir -p "$(dirname "$f")"
+  if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then echo >>"$f"; fi
+  grep -q '^\[Default Applications\]' "$f" 2>/dev/null || printf '[Default Applications]\n' >>"$f"
+  for t in "$@"; do
+    sed -i "\#^$t=#d" "$f"
+    sed -i "/^\[Default Applications\]/a $t=$desktop" "$f"
+  done
+}
+friday_everyday_defaults() { # <home>
+  local home="$1" d
+  case "$FILE_MANAGER" in
+    thunar) d=thunar.desktop ;; dolphin) d=org.kde.dolphin.desktop ;; nemo) d=nemo.desktop ;;
+    yazi) d=yazi.desktop ;; *) d=org.gnome.Nautilus.desktop ;;
+  esac
+  friday_mime_default "$home" "$d" inode/directory
+  case "$VIDEO_PLAYER" in
+    mpv) d=mpv.desktop ;; vlc) d=vlc.desktop ;; celluloid) d=io.github.celluloid_player.Celluloid.desktop ;; *) d="" ;;
+  esac
+  [ -z "$d" ] || friday_mime_default "$home" "$d" video/mp4 video/x-matroska video/webm video/quicktime video/x-msvideo video/mpeg
+  case "$IMAGE_VIEWER" in
+    loupe) d=org.gnome.Loupe.desktop ;; imv) d=imv.desktop ;; gwenview) d=org.kde.gwenview.desktop ;; *) d="" ;;
+  esac
+  [ -z "$d" ] || friday_mime_default "$home" "$d" image/png image/jpeg image/gif image/webp image/bmp image/tiff
+  case "$PDF_VIEWER" in
+    papers) d=org.gnome.Papers.desktop ;; zathura) d=org.pwmt.zathura.desktop ;; okular) d=okularApplication_pdf.desktop ;; *) d="" ;;
+  esac
+  [ -z "$d" ] || friday_mime_default "$home" "$d" application/pdf
+  # The terminal picked first, then the rest of FRIDAY's order.
+  local list="$home/.config/xdg-terminals.list" first
+  case "$TERMINAL_APP" in
+    foot) first=foot.desktop ;; alacritty) first=Alacritty.desktop ;; ghostty) first=com.mitchellh.ghostty.desktop ;;
+    wezterm) first=org.wezfurlong.wezterm.desktop ;; *) first=kitty.desktop ;;
+  esac
+  if [ -f "$list" ]; then
+    { grep '^#' "$list"; echo "$first"; grep -v '^#' "$list" | grep -vxF "$first"; } >"$list.new" && mv -f "$list.new" "$list"
+  fi
+  # Super+E: the file manager picked (Yazi runs in the terminal).
+  local cmd
+  case "$FILE_MANAGER" in
+    thunar|dolphin|nemo) cmd="\"$FILE_MANAGER\"" ;; yazi) cmd='"xdg-terminal-exec yazi"' ;; *) cmd="" ;;
+  esac
+  if [ -n "$cmd" ] && [ -f "$home/.config/hypr/bindings.lua" ]; then
+    sed -i "s|^o.bind(\"SUPER + E\", \"Files\", .*)\$|o.bind(\"SUPER + E\", \"Files\", $cmd)|" "$home/.config/hypr/bindings.lua"
+  fi
+}
+friday_everyday_defaults "/mnt$USER_HOME"
+
+# Git: who commits are from (git config --global, as the user).
+if [[ -n "$GIT_NAME$GIT_EMAIL$GITHUB_USER" ]] && [ "$USERNAME" != root ]; then
+  friday_git() { arch-chroot /mnt runuser -u "$USERNAME" -- env HOME="$USER_HOME" git config --global "$@"; }
+  [ -z "$GIT_NAME" ] || friday_git user.name "$GIT_NAME"
+  [ -z "$GIT_EMAIL" ] || friday_git user.email "$GIT_EMAIL"
+  [ -z "$GITHUB_USER" ] || friday_git github.user "$GITHUB_USER"
+  friday_git init.defaultBranch main
+  echo "git identity set for $USERNAME"
+fi
+# GitHub backups: first login offers `friday backup github setup`.
+if [[ "$GITHUB_BACKUP" == true ]]; then
+  mkdir -p "/mnt$USER_HOME/.config/friday"
+  echo "${GITHUB_USER:-}" >"/mnt$USER_HOME/.config/friday/github-backup-wanted"
+fi
 
 if [ "$USERNAME" != "root" ]; then
   arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME" 2>/dev/null || true
