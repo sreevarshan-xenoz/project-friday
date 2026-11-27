@@ -158,15 +158,16 @@ PanelWindow {
         PwNodePeakMonitor {
           id: peakMon
           node: Audio.source
-          enabled: micBar.on && !Audio.micMuted
+          // Only the pill on screen listens: one meter, not one per screen.
+          enabled: micBar.on && win.visible && !Audio.micMuted
         }
         Rectangle { anchors.fill: parent; radius: 2; color: Theme.alpha(Theme.text, 0.1) }
         Rectangle {
           height: parent.height
           radius: 2
           color: Audio.micMuted ? Theme.error : Theme.accent
-          // Speech peaks sit low on a linear scale: the square root spreads them.
-          width: Audio.micMuted ? parent.width : parent.width * Math.min(1, Math.sqrt(peakMon.peak) * 1.2)
+          // (Quickshell already scales peak for display: a cube root.)
+          width: Audio.micMuted ? parent.width : parent.width * Math.min(1, peakMon.peak)
         }
       }
       Label {
