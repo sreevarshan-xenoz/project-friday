@@ -33,6 +33,8 @@ Singleton {
     root.drawer = name;
   }
   function close() { root.drawer = ""; }
+  // A tray menu is open (it keeps an auto-hiding bar up).
+  property bool menuOpen: false
   function toggle(name, screenName) {
     const s = screenName || focusedScreen();
     if (root.drawer === name && root.screen === s)

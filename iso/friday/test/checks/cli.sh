@@ -3010,6 +3010,13 @@ contains "the shelf is off unless turned on" "$("${sh_env[@]}" bash "$F" shell s
 "${sh_env[@]}" bash "$F" shell shelf on >/dev/null
 [[ "$(jq -r '.shelf' "$conf")" == true ]] && pass "shelf on is saved" || fail "shell.json after shelf on: $(cat "$conf")"
 "${sh_env[@]}" bash "$F" shell shelf off >/dev/null
+contains "the bar's auto-hide is off unless turned on" "$("${sh_env[@]}" bash "$F" shell autohide)" "Auto-hide bar: off"
+"${sh_env[@]}" bash "$F" shell autohide on >/dev/null
+contains "autohide on" "$("${sh_env[@]}" bash "$F" shell autohide)" "Auto-hide bar: on"
+if [[ "$(jq -r '.barAutoHide' "$conf")" == true && "$(jq -r '.style' "$conf")" == island ]]; then pass "autohide on is saved beside the other settings"
+else fail "shell.json after autohide on: $(cat "$conf" 2>/dev/null)"; fi
+"${sh_env[@]}" bash "$F" shell autohide off >/dev/null
+contains "autohide off" "$("${sh_env[@]}" bash "$F" shell autohide)" "Auto-hide bar: off"
 echo '{ "palette": "friday", "clock24h": false }' >"$conf"
 "${sh_env[@]}" bash "$F" shell style dock >/dev/null
 contains "other settings are kept" "$(cat "$conf")" '"clock24h": false'
