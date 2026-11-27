@@ -54,6 +54,10 @@ async fn one_controlled_command_end_to_end() {
 
     // The daemon's command loop: token gate -> dispatch -> echo into state.
     let dispatch_state = state.clone();
+    // The bus event the goal produced, for the test body to check: a panic
+    // inside the spawned loop would never fail the test.
+    let seen_event = Arc::new(Mutex::new(None));
+    let seen_in_loop = seen_event.clone();
     let dispatch_token = TOKEN.to_string();
     let cmd_loop = tokio::spawn(async move {
         let bus_for_gateway = EventBus::new();
@@ -80,8 +84,7 @@ async fn one_controlled_command_end_to_end() {
                 if let Ok(Ok(ev)) =
                     tokio::time::timeout(Duration::from_secs(5), bus_sub.recv()).await
                 {
-                    assert_eq!(ev.kind, "plan.goal");
-                    assert_eq!(ev.payload["goal"], "List the files");
+                    *seen_in_loop.lock().await = Some(ev);
                 }
                 let mut st = dispatch_state.lock().await;
                 st.command = Some(CommandRecord {
@@ -151,6 +154,14 @@ async fn one_controlled_command_end_to_end() {
         let rec = st.command.as_ref().expect("command echoed into state");
         assert_eq!(rec.method, method::PLANNER_GOAL);
         assert_eq!(rec.goal.as_deref(), Some("List the files"));
+    }
+    {
+        let ev = seen_event.lock().await;
+        let ev = ev
+            .as_ref()
+            .expect("the goal put a plan.goal event on the bus");
+        assert_eq!(ev.kind, "plan.goal");
+        assert_eq!(ev.payload["goal"], "List the files");
     }
 
     client.close(None).await.unwrap();
