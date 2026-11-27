@@ -3880,7 +3880,7 @@ EOF2
   esac
 }
 
-# `friday clipguard [watch|check]` (CTX-14, switch clipboard-expiry): a
+# `friday clipguard [watch|check]` (CTX-14, switch clipboard-clear): a
 # password or key left on the clipboard is cleared after 2 minutes, clips on
 # or off. `watch` (FRIDAY OS starts it at login) runs `check` on each
 # clipboard change. A copy a password manager marks as sensitive, or one
@@ -3888,23 +3888,27 @@ EOF2
 # in memory; if the clipboard still holds the same text 2 minutes later, it
 # is cleared. Anything copied since is left alone.
 friday_clipguard() {
-  local text sum
+  local text sum types
   case "${1:-watch}" in
     watch)
       command -v wl-paste >/dev/null 2>&1 || { echo "friday: clipguard needs wl-clipboard" >&2; return 1; }
       exec wl-paste --type text --watch "$0" clipguard check ;;
     check)
       text=$(head -c 20000)
-      friday_feature_on clipboard-expiry || return 0
+      friday_feature_on clipboard-clear || return 0
       [ -n "${text//[[:space:]]/}" ] || return 0
+      # (Read first: grep -q quitting early mustn't fail the pipe under pipefail.)
+      types=$(timeout 2 wl-paste --list-types 2>/dev/null || true)
       if [ "${CLIPBOARD_STATE:-}" != sensitive ] && ! friday_secret_shaped "$text" \
-        && ! timeout 2 wl-paste --list-types 2>/dev/null | grep -qi 'passwordmanagerhint'; then
+        && ! grep -qi 'passwordmanagerhint' <<<"$types"; then
         return 0
       fi
       sum=$(printf '%s' "$text" | sha256sum | cut -d' ' -f1)
       text=""
       (
         sleep "${FRIDAY_CLIPGUARD_SECONDS:-120}"
+        # Switched off meanwhile: leave it.
+        friday_feature_on clipboard-clear || exit 0
         # Read and hashed the same way as above, so the sums compare.
         now=$(timeout 2 wl-paste --no-newline --type text 2>/dev/null || true)
         if [ -n "$now" ] && [ "$(printf '%s' "$now" | sha256sum | cut -d' ' -f1)" = "$sum" ]; then
@@ -5056,7 +5060,7 @@ memory-changes|A changed fact (\"I moved to Pune\") closes the old one with a da
 brief|\"What did I miss?\" answered from FRIDAY's own records (agents, standing tasks, reminders)
 call-pause|\"Hey Friday\" rests while a call or meeting app uses the microphone
 action-check|Before a risky action, say what will change; after it, check and say done, partly or failed
-clipboard-expiry|A password or key left on the clipboard is cleared after 2 minutes, with clips on or off"
+clipboard-clear|A password or key left on the clipboard is cleared after 2 minutes, with clips on or off"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }

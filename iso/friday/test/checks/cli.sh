@@ -1087,10 +1087,16 @@ cg_try 'hunter2Secret99xyz' 'a note copied since'
 if [ -s "$cg/log" ]; then fail "clipguard cleared something copied after the password"; else pass "something copied since is left alone"; fi
 cg_try 'just some ordinary words' 'just some ordinary words'
 if [ -s "$cg/log" ]; then fail "clipguard cleared an ordinary copy"; else pass "an ordinary copy is left alone"; fi
-bash "$F" feature clipboard-expiry off >/dev/null
+bash "$F" feature clipboard-clear off >/dev/null
 cg_try 'hunter2Secret99xyz' 'hunter2Secret99xyz'
-if [ -s "$cg/log" ]; then fail "clipguard cleared with clipboard-expiry off"; else pass "with clipboard-expiry off nothing is cleared"; fi
-bash "$F" feature clipboard-expiry on >/dev/null
+if [ -s "$cg/log" ]; then fail "clipguard cleared with clipboard-clear off"; else pass "with clipboard-clear off nothing is cleared"; fi
+bash "$F" feature clipboard-clear on >/dev/null
+# Switched off while a timer waits: that one is left too.
+: >"$cg/log"; printf '%s' 'hunter2Secret99xyz' >"$cg/now"
+printf '%s' 'hunter2Secret99xyz' | env PATH="$cg:$PATH" FRIDAY_CLIPGUARD_SECONDS=1 bash "$F" clipguard check
+bash "$F" feature clipboard-clear off >/dev/null; sleep 2
+if [ -s "$cg/log" ]; then fail "a waiting timer cleared after clipboard-clear went off"; else pass "turning it off stops a waiting timer"; fi
+bash "$F" feature clipboard-clear on >/dev/null
 for i in $(seq 1 205); do printf '{"ts":1,"text":"old %s"}\n' "$i"; done >"$CLIPS"
 printf 'newest' | bash "$F" clips add
 expect "only the last 200 are kept" test "$(wc -l <"$CLIPS")" -eq 200
