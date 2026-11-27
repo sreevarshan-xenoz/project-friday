@@ -54,8 +54,11 @@ public static class Program
         Console.WriteLine($"[windows-host] listening on \\\\.\\pipe\\{pipeName}");
         while (true)
         {
+            // CurrentUserOnly: only this person's processes can connect (the
+            // pipe's ACL), and a pipe of that name another user made is refused.
             using var pipe = new NamedPipeServerStream(
-                pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             try
             {
                 pipe.WaitForConnection();
@@ -82,6 +85,8 @@ public static class Program
         {
             ReadExact(pipe, lenBytes, 4);
             var len = BitConverter.ToInt32(lenBytes, 0);
+            if (len <= 0 || len > MaxFrame)
+                throw new InvalidDataException($"frame length {len} out of range");
             var json = ArrayPool<byte>.Shared.Rent(len);
             try
             {
@@ -112,12 +117,21 @@ public static class Program
         }
     }
 
+    /// <summary>The largest request frame (a manifest or a screenshot answer is far smaller).</summary>
+    private const int MaxFrame = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// Reads exactly <paramref name="count"/> bytes, giving up after 5 s: a
+    /// client that connects and sends nothing must not hold the host (it
+    /// serves one client at a time).
+    /// </summary>
     private static void ReadExact(Stream stream, byte[] buffer, int count)
     {
         var read = 0;
+        using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (read < count)
         {
-            var n = stream.Read(buffer, read, count - read);
+            var n = stream.ReadAsync(buffer.AsMemory(read, count - read), timeout.Token).AsTask().GetAwaiter().GetResult();
             if (n == 0)
                 throw new EndOfStreamException("pipe closed mid-frame");
             read += n;

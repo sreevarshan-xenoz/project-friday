@@ -58,6 +58,11 @@ internal sealed class TrayContext : ApplicationContext
         void GaveUp(string name) => ui.Post(_ => Notify("FRIDAY keeps crashing", $"Stopped restarting {name}. Logs: {install.Paths.LogDir}", ToolTipIcon.Error), null);
         _daemon.GaveUp += GaveUp;
         _host.GaveUp += GaveUp;
+        // Administrator start-up runs a copy; after an update it's the old FRIDAY.
+        if (Elevation.CopyIsOld())
+            ui.Post(_ => Notify("FRIDAY's administrator copy is out of date",
+                "FRIDAY was updated, but administrator start-up still runs the old copy. Settings → General: turn \"Start with administrator rights\" off and on again.",
+                ToolTipIcon.Warning), null);
 
         _hotkeys.Pressed += kind => _ = kind == AskKind.Plain ? AskOrTalkAsync() : AskAsync(kind);
         _hotkeys.RegisterAll();
@@ -67,6 +72,9 @@ internal sealed class TrayContext : ApplicationContext
         _hotkeys.ClipboardChanged += () =>
         {
             if (DateTime.UtcNow < _ownClipboardUntil)
+                return;
+            // Only for clipboard-expiry: with it off, the clipboard isn't read at all.
+            if (!AppSettings.FeatureOn(EnvFile.Load(install.Paths.EnvFile), "clipboard-expiry"))
                 return;
             try
             {

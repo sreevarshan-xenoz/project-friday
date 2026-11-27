@@ -14,6 +14,46 @@ public static class ElevatedStart
 {
     public const string TaskName = "FRIDAY";
 
+    /// <summary>
+    /// Where the task's copy of FRIDAY lives: under Program Files, which only
+    /// administrators can change. The per-user install is writable by any
+    /// program the person runs, so a task starting it with administrator
+    /// rights would hand those rights to whatever replaced the exe there.
+    /// </summary>
+    public static string MachineDir(string programFiles) => Path.Combine(programFiles, "FRIDAY", "Administrator start");
+
+    /// <summary>The file in the copy naming the install it was made from.</summary>
+    public const string SourceFile = "copied-from.txt";
+
+    /// <summary>Replaces <paramref name="to"/> with a copy of every file under <paramref name="from"/>.</summary>
+    public static void CopyInstall(string from, string to)
+    {
+        if (Directory.Exists(to))
+            Directory.Delete(to, recursive: true);
+        foreach (var dir in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, dir)));
+        Directory.CreateDirectory(to);
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+            File.Copy(file, Path.Combine(to, Path.GetRelativePath(from, file)), overwrite: true);
+        File.WriteAllText(Path.Combine(to, SourceFile), from);
+    }
+
+    /// <summary>
+    /// Whether the copy in <paramref name="copyDir"/> is older than the install
+    /// it came from (FRIDAY was updated since): compared by the tray exe's
+    /// file version. False when there is no copy or no source to compare.
+    /// </summary>
+    public static bool CopyIsOld(string copyDir, Func<string, string?> fileVersion)
+    {
+        var source = Path.Combine(copyDir, SourceFile);
+        if (!File.Exists(source))
+            return false;
+        var from = File.ReadAllText(source).Trim();
+        var theirs = fileVersion(Path.Combine(from, "friday-tray.exe"));
+        var ours = fileVersion(Path.Combine(copyDir, "friday-tray.exe"));
+        return theirs is not null && ours is not null && theirs != ours;
+    }
+
     /// <summary>The task definition for <paramref name="user"/> (DOMAIN\name) starting <paramref name="exe"/>.</summary>
     public static string TaskXml(string user, string exe)
     {

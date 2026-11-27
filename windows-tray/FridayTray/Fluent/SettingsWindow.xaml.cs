@@ -286,6 +286,7 @@ internal sealed partial class SettingsWindow : FluentWindow
             "Lets FRIDAY control apps that run as administrator (an app like that ignores keys and clicks from a normal program). " +
             "Everything FRIDAY does then runs with those rights, so only turn it on if you need it. " +
             "Windows asks for permission once, now; after that FRIDAY starts at every sign-in without asking. " +
+            "It runs a copy of FRIDAY kept under Program Files, which only administrators can change; after FRIDAY updates, turn this off and on again to update the copy. " +
             (Elevation.IsElevated() ? "FRIDAY is running as administrator now." : "Takes effect the next time FRIDAY starts."),
             admin,
             SetAdministrator);
@@ -1582,6 +1583,14 @@ internal sealed partial class SettingsWindow : FluentWindow
         // The task now starts FRIDAY at sign-in (or the Run entry does again).
         _install.StartsAtLogin = !on;
         Show("General");
+        if (!on && Elevation.RunningFromCopy())
+        {
+            // The administrator copy can't be removed while it runs.
+            MessageBox.Show(this, "FRIDAY will start normally from now on. It restarts now to finish.",
+                "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Information);
+            _do.RestartIntoAdministrator();
+            return;
+        }
         if (MessageBox.Show(this, on ? "FRIDAY will start as administrator from now on. Restart it now?" : "FRIDAY will start normally from now on. Restart it now?",
                 "FRIDAY", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             _do.RestartIntoAdministrator();
