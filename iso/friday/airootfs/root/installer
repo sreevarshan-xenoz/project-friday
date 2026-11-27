@@ -47,6 +47,10 @@ fi
 # chromium is always installed) and which one opens links by default.
 BROWSERS="${BROWSERS:-}"
 DEFAULT_BROWSER="${DEFAULT_BROWSER:-chromium}"
+# Code editors (vscode code zed neovim cursor) and AI coding agents (opencode
+# claude codex gemini agy cline kilo) to install; see friday_app_source.
+EDITORS="${EDITORS:-}"
+AGENTS="${AGENTS:-}"
 # Local AI: ollama|llamacpp, its memory budget and model (friday local-ai presets).
 FRIDAY_LOCAL_ENGINE="${FRIDAY_LOCAL_ENGINE:-}"
 FRIDAY_LOCAL_BUDGET_MB="${FRIDAY_LOCAL_BUDGET_MB:-}"
@@ -81,6 +85,34 @@ phase_msg() {
   echo "=== Step $1 of 6: $2"
 }
 
+# friday_apps_line <text>: what's being installed now, under the step header.
+friday_apps_line() {
+  echo "--- $1"
+  { gum style --margin "0 0 0 $FRIDAY_INDENT" --foreground "$FRIDAY_TEXT" "◆ $1"; } >&3 2>/dev/null || echo "$1" >&3
+}
+# friday_app_name <package or id>: the name people know.
+friday_app_name() {
+  case "$1" in
+    visual-studio-code-bin|vscode) echo "VS Code" ;;
+    cursor-bin) echo Cursor ;;
+    brave-bin) echo Brave ;;
+    zen-browser-bin) echo Zen ;;
+    claude-code) echo "Claude Code" ;;
+    openai-codex-bin) echo Codex ;;
+    @kilocode/cli) echo Kilo ;;
+    cline) echo Cline ;;
+    agy) echo "Antigravity CLI" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# friday_download_mb: MB in the new system's package cache and home so far.
+friday_download_mb() {
+  local mb
+  mb=$(du -smc /mnt/var/cache/pacman/pkg "/mnt${USER_HOME:-/nonexistent}" 2>/dev/null | tail -n 1 | cut -f1)
+  echo "${mb:-0}"
+}
+
 # A live one-line status under the step header while a long step runs:
 # spinner, elapsed time, and the latest package pacman is handling.
 LIVE_PID="" LIVE_ORB=false
@@ -100,14 +132,46 @@ live_status_start() {
   (
     trap - ERR EXIT
     set +e
-    # The console font has no Braille (or half blocks): a plain spinner there.
-    frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; [[ "${TERM:-}" == linux ]] && frames='|/-\|/-\|/'; i=0
+    # The console font has no Braille (or half blocks): a plain spinner and
+    # an ASCII bar there.
+    frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' full='█' empty='░'
+    [[ "${TERM:-}" == linux ]] && frames='|/-\|/-\|/' full='#' empty='.'
+    i=0 from=$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)
+    # Downloads are measured by how much the package caches and the new home
+    # grow (pacman logs no byte counts when it isn't on a terminal).
+    base=$(friday_download_mb) got=0 rate="" last_mb=0 last_t=$SECONDS
     while true; do
-      line=$(tail -n 40 "$LOG_FILE" 2>/dev/null | tr '\r' '\n' \
-        | grep -oE '\(\s*[0-9]+/[0-9]+\) (installing|upgrading|checking|downloading|loading|resolving)[^ ]* ?[^ ]*|downloading [^ ]+|:: [A-Za-z ]+\.\.\.' \
-        | tail -n 1)
-      printf '\r\e[2K%s%s%s\e[0m %s  %s%s\e[0m' "$FRIDAY_PAD" "$(friday_fg "$FRIDAY_ACCENT")" \
-        "${frames:i%10:1}" "$(elapsed)" "$(friday_fg "$FRIDAY_MUTED")" "${line:0:60}" >&3
+      recent=$(tail -c +"$((from + 1))" "$LOG_FILE" 2>/dev/null | tail -n 60 | tr '\r' '\n')
+      line=$(grep -oE '\(\s*[0-9]+/[0-9]+\) (installing|upgrading|checking|downloading|loading|resolving)[^ ]* ?[^ ]*|downloading [^ ]+|:: [A-Za-z ]+\.\.\.|Building [^ ]+|Installed [^ ]+' <<<"$recent" | tail -n 1)
+      if (( i % 7 == 0 )); then
+        now=$(friday_download_mb); got=$(( now - base )); (( got < 0 )) && got=0
+        if (( SECONDS > last_t )); then
+          rate=$(( (now - last_mb) / (SECONDS - last_t) )); last_mb=$now last_t=$SECONDS
+        fi
+      fi
+      total=$(tail -c +"$((from + 1))" "$LOG_FILE" 2>/dev/null \
+        | grep -aoE 'Total Download Size: +[0-9.]+ (MiB|GiB)' | tail -n 1 \
+        | awk '{ v = $4; if ($5 == "GiB") v *= 1024; printf "%d", v }')
+      # Installing: pacman's own (n/m). Downloading: MB so far of the total.
+      pct=-1 what=""
+      if [[ $line =~ \(\ *([0-9]+)/([0-9]+)\)\ (installing|upgrading) ]]; then
+        pct=$(( 100 * BASH_REMATCH[1] / BASH_REMATCH[2] )); what="installing ${line##* }"
+      elif [[ -n "$total" ]] && (( total > 0 )) && (( got > 0 )); then
+        pct=$(( 100 * got / total )); (( pct > 99 )) && pct=99
+        what="downloading $got of $total MB${rate:+ · $rate MB/s}"
+      else
+        what="${line:0:60}"
+        (( got > 0 )) && what+="${what:+  }$got MB${rate:+ · $rate MB/s}"
+      fi
+      bar=""
+      if (( pct >= 0 )); then
+        fill=$(( pct / 5 )) k=0 bar="│"; [[ $full == '#' ]] && bar="["
+        while (( k < 20 )); do if (( k < fill )); then bar+=$full; else bar+=$empty; fi; k=$((k + 1)); done
+        if [[ $full == '#' ]]; then bar+="] "; else bar+="│ "; fi
+        bar+="$(printf '%3d%%' "$pct")  "
+      fi
+      printf '\r\e[2K%s%s%s\e[0m %s  %s%s%s%s\e[0m' "$FRIDAY_PAD" "$(friday_fg "$FRIDAY_ACCENT")" \
+        "${frames:i%10:1}" "$(elapsed)" "$(friday_fg "$FRIDAY_ACCENT")" "$bar" "$(friday_fg "$FRIDAY_MUTED")" "${what:0:64}" >&3
       # Below the line, then back to it: \e7 keeps the cursor, \e8 returns.
       $orb && (( i % 3 == 0 )) && printf '\e7\n\n%s%s\e[0m\e8' "$(friday_fg "$FRIDAY_ACCENT")" \
         "$(friday_orb $((i / 3)) | sed "s/^/$FRIDAY_PAD/")" >&3
@@ -335,7 +399,42 @@ for b in $BROWSERS; do
     vivaldi) browser_pkgs+=("vivaldi") ;;
   esac
 done
-if (( ${#browser_pkgs[@]} )); then pacstrap_with_retry /mnt "${browser_pkgs[@]}"; fi
+# Editors and agents: from the Arch repos now, the AUR once the user exists,
+# npm and agy's own installer as the user at the end.
+friday_app_source() { # <id> -> repo:<pkg> | aur:<pkg> | npm:<pkg> | agy
+  case "$1" in
+    vscode) echo aur:visual-studio-code-bin ;;
+    code) echo repo:code ;;
+    zed) echo repo:zed ;;
+    neovim) echo repo:neovim ;;
+    cursor) echo aur:cursor-bin ;;
+    opencode) echo repo:opencode ;;
+    claude) echo aur:claude-code ;;
+    codex) echo aur:openai-codex-bin ;;
+    gemini) echo repo:gemini-cli ;;
+    agy) echo agy ;;
+    cline) echo npm:cline ;;
+    kilo) echo npm:@kilocode/cli ;;
+  esac
+}
+user_apps=()
+for app in ${EDITORS:-} ${AGENTS:-}; do
+  src=$(friday_app_source "$app")
+  case "$src" in
+    repo:*) browser_pkgs+=("${src#repo:}") ;;
+    aur:*) aur_pkgs+=("${src#aur:}") ;;
+    npm:*|agy) user_apps+=("$src") ;;
+  esac
+done
+# npm-installed agents need Node.
+for src in "${user_apps[@]}"; do [[ $src == npm:* ]] && { browser_pkgs+=(nodejs npm); break; }; done
+if (( ${#browser_pkgs[@]} )); then
+  friday_apps_line "Installing ${#browser_pkgs[@]} apps from the Arch repos"
+  live_status_start
+  pacstrap_with_retry /mnt "${browser_pkgs[@]}"
+  live_status_stop
+fi
+# (end of the apps from the Arch repos)
 # Updates: each FRIDAY release publishes friday-git to this pacman repo, so
 # pacman -Syu keeps FRIDAY current. Packages and the database are signed with
 # FRIDAY's release key (shipped in friday-git); pacman trusts that one key and
@@ -487,7 +586,11 @@ chmod 440 /mnt/etc/sudoers.d/wheel
 friday_aur_install() {
   local pkg dir
   pacstrap_with_retry /mnt base-devel git
+  local n=0
   for pkg in "$@"; do
+    n=$((n + 1))
+    friday_apps_line "Building $(friday_app_name "$pkg") from the AUR ($n of $#)"
+    live_status_start
     # On the disk, in the user's own cache: every arch-chroot gets a fresh,
     # empty /tmp, so a folder made there is gone by the next call.
     dir="$USER_HOME/.cache/friday-aur/$pkg"
@@ -498,8 +601,10 @@ friday_aur_install() {
     else
       echo "Couldn't build $pkg from the AUR; install it later with: yay -S $pkg" >&2
       echo "AUR build of $pkg failed"
+      live_status_stop
       friday_note "  Couldn't install $pkg; after the restart: yay -S $pkg (details in /var/log/friday-install.log)" >&3
     fi
+    live_status_stop
     rm -rf "/mnt$dir"
   done
   rmdir "/mnt$USER_HOME/.cache/friday-aur" 2>/dev/null || true
@@ -526,6 +631,36 @@ fi
 # rsync -a also copied skel's 755 onto the home folders; they are private.
 chmod 700 "/mnt$USER_HOME"
 [ -d /mnt/root ] && chmod 700 /mnt/root
+
+# Agents that come from npm or their own installer, as the user into
+# ~/.local (on PATH), so they update themselves without root. One that
+# fails is skipped with a note, like an AUR build.
+if (( ${#user_apps[@]} )) && [ "$USERNAME" != root ]; then
+  n=0
+  for src in "${user_apps[@]}"; do
+    n=$((n + 1))
+    case "$src" in
+      npm:*) name="${src#npm:}"; cmd='npm config set prefix "$HOME/.local" && npm install -g --no-fund --no-audit "$1"' ;;
+      agy) name=agy; cmd='curl -fsSL https://antigravity.google/cli/install.sh | bash' ;;
+    esac
+    friday_apps_line "Installing $(friday_app_name "$name") ($n of ${#user_apps[@]})"
+    live_status_start
+    if arch-chroot /mnt runuser -u "$USERNAME" -- env HOME="$USER_HOME" bash -lc "$cmd" _ "$name"; then
+      echo "Installed $name for $USERNAME."
+    else
+      echo "Couldn't install $name"
+      live_status_stop
+      friday_note "  Couldn't install $(friday_app_name "$name"); after the restart: friday connect shows how" >&3
+    fi
+    live_status_stop
+  done
+fi
+# The agents picked, for FRIDAY's first-login offer to connect them.
+if [[ -n "$AGENTS" ]]; then
+  mkdir -p "/mnt$USER_HOME/.config/friday"
+  printf '%s\n' $AGENTS >"/mnt$USER_HOME/.config/friday/agents-picked"
+  [ "$USERNAME" = root ] || arch-chroot /mnt chown -R "$USERNAME:$USERNAME" "$USER_HOME/.config/friday"
+fi
 
 # Deploy Theme Selection
 if [[ "$THEME" =~ "Dots-Hyprland" ]]; then
