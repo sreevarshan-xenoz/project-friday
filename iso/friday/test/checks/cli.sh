@@ -1448,6 +1448,13 @@ contains "sounds turn on" "$(FRIDAY_SOUNDS_DIR="$SND" bash "$F" sounds on)" "Sou
 contains "an answer done plays the done cue" "$(cat "$LOG")" "complete.oga"
 : >"$LOG"; FRIDAY_SOUNDS_DIR="$SND" bash "$F" ask "hit the limit"; sleep 0.5
 contains "a failed answer plays the failed cue" "$(cat "$LOG")" "dialog-error.oga"
+NEON="$W/neon"; mkdir -p "$NEON"; touch "$NEON/listen.oga" "$NEON/done.oga" "$NEON/error.oga" "$NEON/wallpaper.oga"
+contains "the Neon set turns on" "$(bash "$F" sounds neon)" "Neon set"
+contains "status names the Neon set" "$(bash "$F" sounds status)" "Neon set"
+: >"$LOG"; FRIDAY_NEON_SOUNDS_DIR="$NEON" bash "$F" ask "a quiet one"; sleep 0.5
+contains "neon: an answer done plays the Neon done cue" "$(cat "$LOG")" "neon/done.oga"
+: >"$LOG"; FRIDAY_NEON_SOUNDS_DIR="$NEON" bash "$F" ask "hit the limit"; sleep 0.5
+contains "neon: a failed answer plays the Neon error cue" "$(cat "$LOG")" "neon/error.oga"
 bash "$F" sounds off >/dev/null; rm -f "$S/pw-play"
 echo "pinned tools (friday obscura)"
 TL="$W/tools"; mkdir -p "$TL/pkg"; printf '#!/bin/sh\necho "obscura 9.9.9"\n' >"$TL/pkg/obscura"; chmod +x "$TL/pkg/obscura"
