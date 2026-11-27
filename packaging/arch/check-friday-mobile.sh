@@ -15,7 +15,7 @@ for f in usr/bin/friday-mobile usr/bin/friday-mobile-app usr/bin/friday-mobile-t
   usr/lib/friday-mobile/friday-mobile-pam-ask usr/lib/systemd/user/friday-mobile.service \
   usr/share/applications/dev.friday.Mobile.desktop \
   usr/share/icons/hicolor/scalable/apps/dev.friday.Mobile.svg \
-  usr/share/licenses/friday-mobile/LICENSE-MIT usr/share/licenses/friday-mobile/LICENSE-APACHE; do
+  usr/share/licenses/friday-mobile/LICENSE usr/share/licenses/friday-mobile/NOTICE; do
   grep -qx "$f" <<<"$files" && ok "$f" || bad "missing $f"
 done
 # makepkg compresses man pages, so the file may end in .gz.

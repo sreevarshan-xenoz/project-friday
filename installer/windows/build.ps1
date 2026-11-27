@@ -62,7 +62,7 @@ foreach ($project in @("$repo\windows-tray\FridayTray\FridayTray.csproj", "$repo
         # The MSI's version, so Settings' "This version" matches what was installed (it said 0.1.0).
         '-p:PublishSingleFile=false', "-p:Version=$version", '-o', $stage)
 }
-Copy-Item "$repo\LICENSE-MIT", "$repo\LICENSE-APACHE" $stage
+Copy-Item "$repo\LICENSE", "$repo\NOTICE" $stage
 # FRIDAY's guide, beside friday-ctl: questions about FRIDAY are answered from it.
 Copy-Item "$repo\docs\USING.md" $stage
 # FRIDAY's browser extension (Settings, Browser loads it from here).

@@ -1,0 +1,36 @@
+FRIDAY
+Copyright (C) 2026 sreevarshan-xenoz and the FRIDAY contributors
+https://github.com/sreevarshan-xenoz/project-friday
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License, version 3, as
+published by the Free Software Foundation (see LICENSE), with the
+additional term below.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
+License for more details.
+
+Additional term (section 7(b) of the AGPL: preservation of author
+attributions)
+
+If you convey FRIDAY, a modified version of it, or any work based on it
+or that includes any part of it, in source or object form, or make such
+a work available to users over a network, you must keep this
+attribution, readable and unchanged:
+
+    Based on FRIDAY by sreevarshan-xenoz
+    https://github.com/sreevarshan-xenoz/project-friday
+
+in all of these places:
+  - this NOTICE file, shipped with the work;
+  - the work's README or main documentation;
+  - the work's "About" or credits screen, or its --version or --help
+    output, if it has any of them.
+
+Earlier releases
+
+Releases published before this change (up to and including v0.10.0) were
+licensed under "MIT OR Apache-2.0". Copies of those releases keep that
+license; everything after them is under the terms above.
