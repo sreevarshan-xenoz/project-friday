@@ -87,8 +87,8 @@ PanelWindow {
     y: Theme.barAtBottom ? parent.height - height - Theme.barInset + bar.slide : Theme.barInset - bar.slide
     height: Theme.barHeight
     radius: Theme.floating ? height / 2 : 0
-    color: bar.island || Theme.keystone ? "transparent" : Theme.glass
-    border.width: Theme.style === "dock" ? 1 : 0
+    color: bar.island || Theme.keystone || !Config.barBackground ? "transparent" : Theme.glass
+    border.width: Theme.style === "dock" && Config.barBackground ? 1 : 0
     border.color: Theme.glassEdge
   }
   // Keystone: the notch, flush with the top edge, round at the bottom, with
@@ -101,20 +101,22 @@ PanelWindow {
     y: -radius - bar.slide
     height: Theme.barHeight + radius
     radius: 16
-    color: Theme.glass
-    border.width: 1
+    color: Config.barBackground ? Theme.glass : "transparent"
+    border.width: Config.barBackground ? 1 : 0
     border.color: Theme.glassEdge
   }
-  Corner { visible: Theme.keystone; size: 10; leftSide: false; x: notch.x - size; y: -bar.slide }
-  Corner { visible: Theme.keystone; size: 10; leftSide: true; x: notch.x + notch.width; y: -bar.slide }
+  // Corners: off with "barCorners" false (plain) or with no background.
+  readonly property bool corners: Config.barCorners && Config.barBackground
+  Corner { visible: Theme.keystone && bar.corners; size: 10; leftSide: false; x: notch.x - size; y: -bar.slide }
+  Corner { visible: Theme.keystone && bar.corners; size: 10; leftSide: true; x: notch.x + notch.width; y: -bar.slide }
 
-  Corner { visible: !Theme.floating && !Theme.keystone; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
-  Corner { visible: !Theme.floating && !Theme.keystone; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
+  Corner { visible: !Theme.floating && !Theme.keystone && bar.corners; leftSide: true; anchors.top: strip.bottom; anchors.left: parent.left }
+  Corner { visible: !Theme.floating && !Theme.keystone && bar.corners; leftSide: false; anchors.top: strip.bottom; anchors.right: parent.right }
 
   // The island style's pills: one behind each group.
   component Pill: Rectangle {
     required property Item group
-    visible: bar.island
+    visible: bar.island && Config.barBackground
     x: group.x - 10
     y: strip.y
     width: group.width + 20

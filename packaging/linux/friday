@@ -169,6 +169,8 @@ Desktop & System Substrate:
   friday shell dock [on|off]       A dock of pinned and running apps along the bottom (up at the edge)
   friday shell shelf [on|off]      A shelf on the right edge: drop files or text to keep, recent copies
   friday shell autohide [on|off]   The bar slides away until the pointer reaches its edge
+  friday shell corners [on|off]    The curved corners where the bar meets the screen (off: plain)
+  friday shell background [on|off] The bar's own background (off: its parts sit on the wallpaper)
   friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
   friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
@@ -7760,18 +7762,26 @@ $offer"
           *) echo "Usage: friday shell shelf [on|off|status]" >&2; exit 2 ;;
         esac
         exit 0 ;;
-      autohide)
-        # The bar slides away until the pointer reaches its edge (shell.json
-        # "barAutoHide"); off unless turned on.
+      autohide|corners|background)
+        # The bar's switches in shell.json: auto-hide (off unless turned on),
+        # its corners and its background (on unless turned off).
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
+        case "$1" in
+          autohide) key=barAutoHide name="Auto-hide bar" def=false ;;
+          corners) key=barCorners name="Bar corners" def=true ;;
+          background) key=barBackground name="Bar background" def=true ;;
+        esac
         case "${2:-status}" in
           on|off)
             mkdir -p "$(dirname "$conf")"; tmp=$(mktemp "$conf.XXXXXX")
             v=false; [ "$2" = on ] && v=true
-            jq --argjson v "$v" '.barAutoHide = $v' "$conf" >"$tmp" 2>/dev/null || jq -n --argjson v "$v" '{barAutoHide: $v}' >"$tmp"
-            mv -f "$tmp" "$conf"; echo "Auto-hide bar: $2." ;;
-          status) if [ "$(jq -r '.barAutoHide // false' "$conf" 2>/dev/null)" = true ]; then echo "Auto-hide bar: on"; else echo "Auto-hide bar: off (friday shell autohide on)"; fi ;;
-          *) echo "Usage: friday shell autohide [on|off|status]" >&2; exit 2 ;;
+            jq --arg k "$key" --argjson v "$v" '.[$k] = $v' "$conf" >"$tmp" 2>/dev/null || jq -n --arg k "$key" --argjson v "$v" '{($k): $v}' >"$tmp"
+            mv -f "$tmp" "$conf"; echo "$name: $2." ;;
+          status)
+            # Not "//": it takes a false as missing.
+            v=$(jq -r --arg k "$key" 'if has($k) then .[$k] else empty end' "$conf" 2>/dev/null || true); [ -n "$v" ] || v=$def
+            if [ "$v" = true ]; then echo "$name: on"; else echo "$name: off (friday shell $1 on)"; fi ;;
+          *) echo "Usage: friday shell $1 [on|off|status]" >&2; exit 2 ;;
         esac
         exit 0 ;;
       style|palette)
@@ -7809,7 +7819,7 @@ $offer"
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
       overview) exec quickshell -p "$dir" ipc call overview toggle ;;
       wallpaper) exec quickshell -p "$dir" ipc call wallpaper toggle ;;
-      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|dock [on|off]|shelf [on|off]|autohide [on|off]|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|dock [on|off]|shelf [on|off]|autohide|corners|background [on|off]|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
     esac
     ;;
   daemon)
