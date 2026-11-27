@@ -1,0 +1,28 @@
+{
+  "obscura": {
+    "repo": "h4ckf0r0day/obscura",
+    "version": "0.2.7",
+    "license": "Apache-2.0",
+    "about": "a small headless browser FRIDAY reads web pages with (friday obscura install)",
+    "assets": {
+      "linux-x86_64": {
+        "name": "obscura-x86_64-linux-no-render.tar.gz",
+        "sha256": "d64c8521b95bb7cd0efb479b29c88bb5cd297949f6ccf2b7cca82f40e8d26948"
+      },
+      "windows-x86_64": {
+        "name": "obscura-x86_64-windows-no-render.zip",
+        "sha256": "a2ac7d8b08e93e3ed31f6f14cc7057d822725d3f55d91fc7992a6f2d3e0ad1b6"
+      }
+    },
+    "smoke": {
+      "args": [
+        "fetch",
+        "https://example.com",
+        "--dump",
+        "markdown",
+        "--quiet"
+      ],
+      "expect": "documentation examples"
+    }
+  }
+}

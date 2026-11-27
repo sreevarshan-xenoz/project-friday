@@ -1,0 +1,83 @@
+name: Check for new pinned tools
+
+# FRIDAY offers tools from their own releases (packaging/tools/tools.json:
+# `friday obscura install`), each a pinned version and checksum. Weekly, look
+# for newer releases in the same series, download every pinned asset, record
+# its sha256 and smoke-test the Linux build (packaging/tools/bump-tools.py).
+# Tools that pass become one pull request that moves only tools.json, and CI
+# is started on its branch (a push by the workflow's token doesn't start it
+# by itself); CI decides, and a person merges. A new series or a failed check
+# goes to an issue instead.
+
+on:
+  schedule:
+    - cron: "41 6 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  check:
+    name: Verify new releases of pinned tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the releases
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMMARY_FILE: ${{ runner.temp }}/summary.md
+        run: |
+          set +e
+          python3 packaging/tools/bump-tools.py
+          rc=$?
+          set -e
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+          [ -f "$SUMMARY_FILE" ] && cat "$SUMMARY_FILE" >>"$GITHUB_STEP_SUMMARY" || true
+      - name: Open the pull request
+        if: steps.bump.outputs.rc == '10'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMMARY_FILE: ${{ runner.temp }}/summary.md
+        run: |
+          changed=$(git diff --name-only)
+          [ "$changed" = "packaging/tools/tools.json" ] || { echo "::error::unexpected changes: $changed"; exit 1; }
+          branch="bump/tools-$(sha256sum packaging/tools/tools.json | cut -c1-12)"
+          if gh pr list --repo "${{ github.repository }}" --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
+            echo "A pull request for $branch is already open."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add packaging/tools/tools.json
+          git commit -q -m "chore(tools): move pinned tools" -m "$(cat "$SUMMARY_FILE")"
+          git push -q origin "$branch"
+          body="The weekly check verified new releases and moved their pins in \`packaging/tools/tools.json\` (versions and checksums only)."$'\n\n'"$(cat "$SUMMARY_FILE")"$'\n\n'"CI was started on the branch by the workflow; merge when it is green. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh pr create --repo "${{ github.repository }}" --base dev --head "$branch" \
+            --title "chore(tools): move pinned tools" --body "$body"
+          gh workflow run ci.yml --repo "${{ github.repository }}" --ref "$branch"
+      - name: Report
+        if: steps.bump.outputs.rc != '0' && steps.bump.outputs.rc != '10'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC: ${{ steps.bump.outputs.rc }}
+          SUMMARY_FILE: ${{ runner.temp }}/summary.md
+        run: |
+          if [ "$RC" = 3 ]; then
+            title="A pinned tool has a new series"
+            lead="A new major (or, for 0.x, minor) version needs a person: read its release notes before moving the pin by hand."
+          else
+            title="Pinned tools check failed"
+            lead="The weekly check could not verify a newer release. Treat this as a possible supply-chain problem until proven otherwise: do not move the pin."
+          fi
+          body="$lead"$'\n\n'"$(cat "$SUMMARY_FILE" 2>/dev/null)"$'\n\n'"Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          issue=$(gh issue list --repo "${{ github.repository }}" --state open --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --repo "${{ github.repository }}" --body "$body"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$title" --body "$body"
+          fi

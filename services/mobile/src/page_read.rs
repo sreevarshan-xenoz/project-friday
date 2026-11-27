@@ -1,10 +1,14 @@
 //! Reading a web page for an ask that names one ("summarize
 //! https://example.com/post", "what does example.com say about pricing").
 //!
-//! FRIDAY's own browser (headless Chrome, a fresh profile, so none of the
-//! person's logins) loads the page, scripts and all, and its visible text
-//! goes to the answer step as the source. With no Chrome, a plain download
-//! with the tags stripped does instead. Each read is logged in `egress.jsonl`
+//! obscura (a small headless browser, `friday obscura install`; switch:
+//! obscura-reader) reads it first when it's there: about 30 MB and a third of
+//! a second for an ordinary page, against Chrome's hundreds of MB. It refuses
+//! local and private addresses itself. Otherwise, or when it fails, FRIDAY's
+//! own browser (headless Chrome, a fresh profile, so none of the person's
+//! logins) loads the page, scripts and all, and its visible text goes to the
+//! answer step as the source. With no Chrome, a plain download with the tags
+//! stripped does instead. Each read is logged in `egress.jsonl`
 //! like a web search; private mode reads nothing.
 
 use std::path::PathBuf;
@@ -34,6 +38,9 @@ pub struct DefaultPageReader {
     browser: BrowserAdapter,
     client: reqwest::Client,
     egress_log_path: PathBuf,
+    /// Tests point this at a stand-in; otherwise it's looked up each read,
+    /// so `friday obscura install` counts without a restart.
+    obscura: Option<PathBuf>,
 }
 
 impl Default for DefaultPageReader {
@@ -68,11 +75,91 @@ impl Default for DefaultPageReader {
             } else {
                 friday_intelligence::default_egress_path()
             },
+            obscura: None,
         }
     }
 }
 
+/// The obscura binary: `FRIDAY_OBSCURA`, then where `friday obscura install`
+/// puts it, then the PATH.
+pub fn obscura_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("FRIDAY_OBSCURA").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(p)).filter(|p| p.is_file());
+    }
+    let exe = if cfg!(windows) {
+        "obscura.exe"
+    } else {
+        "obscura"
+    };
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    if let Some(p) = base.map(|b| b.join("friday").join("obscura").join(exe)) {
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|d| d.join(exe))
+            .find(|p| p.is_file())
+    })
+}
+
+/// What obscura printed, as a page: the first heading is the title. A
+/// refusal (a redirect to this computer or the home network) comes back on
+/// stdout with exit 0, so it's an error here.
+fn obscura_page(url: &str, markdown: &str) -> Result<Page, String> {
+    let text = markdown.trim();
+    if text.contains("Forbidden redirect target") || text.contains("is not allowed") {
+        return Err(
+            "the page sent me to an address on your own network, so I didn't read it".into(),
+        );
+    }
+    if text.is_empty() {
+        return Err("the page has no text".into());
+    }
+    let title = text
+        .lines()
+        .find_map(|l| l.strip_prefix("# "))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    Ok(Page {
+        url: url.to_string(),
+        title,
+        text: cap(&collapse(text)),
+    })
+}
+
 impl DefaultPageReader {
+    async fn with_obscura(&self, bin: &std::path::Path, url: &str) -> Result<Page, String> {
+        let out = tokio::process::Command::new(bin)
+            .args([
+                "fetch",
+                url,
+                "--dump",
+                "markdown",
+                "--quiet",
+                "--timeout",
+                "12",
+            ])
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .map_err(|e| format!("obscura didn't start ({e})"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(err.lines().next().unwrap_or("obscura failed").to_string());
+        }
+        obscura_page(url, &String::from_utf8_lossy(&out.stdout))
+    }
+
     async fn with_chrome(&self, url: &str) -> Result<Page, String> {
         let opened = self
             .browser
@@ -133,9 +220,30 @@ impl PageReader for DefaultPageReader {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             return Err("only web addresses (http, https) can be read".into());
         }
-        let chrome = tokio::time::timeout(Duration::from_secs(25), self.with_chrome(url))
-            .await
-            .unwrap_or_else(|_| Err("the browser took too long".into()));
+        let bin = self.obscura.clone().or_else(obscura_path);
+        let light = match bin.filter(|_| crate::features::on("obscura-reader")) {
+            Some(bin) => {
+                tokio::time::timeout(Duration::from_secs(15), self.with_obscura(&bin, url))
+                    .await
+                    .unwrap_or_else(|_| Err("obscura took too long".into()))
+            }
+            None => Err(String::new()),
+        };
+        // A refusal stands: Chrome isn't asked to go there instead.
+        if let Err(e) = &light {
+            if e.contains("your own network") {
+                return self.logged(url, light);
+            }
+            if !e.is_empty() {
+                tracing::info!("page read: obscura failed ({e}); trying the browser");
+            }
+        }
+        let chrome = match light {
+            Ok(page) => Ok(page),
+            Err(_) => tokio::time::timeout(Duration::from_secs(25), self.with_chrome(url))
+                .await
+                .unwrap_or_else(|_| Err("the browser took too long".into())),
+        };
         let result = match chrome {
             Ok(page) => Ok(page),
             Err(chrome) => {
@@ -162,6 +270,13 @@ impl PageReader for DefaultPageReader {
             }
             other => other,
         };
+        self.logged(url, result)
+    }
+}
+
+impl DefaultPageReader {
+    /// Each read goes in the egress log, read or refused.
+    fn logged(&self, url: &str, result: Result<Page, String>) -> Result<Page, String> {
         let ctx = friday_intelligence::current_egress_context();
         friday_intelligence::append_entry(
             &self.egress_log_path,
@@ -423,6 +538,48 @@ mod tests {
         assert!(reaches_local("http://localhost:9/x", false).await);
         assert!(!reaches_local("https://nosuch.invalid/", false).await);
         assert!(reaches_local("https://nosuch.invalid/", true).await);
+    }
+
+    #[test]
+    fn obscura_output_becomes_a_page_and_a_refusal_an_error() {
+        let p = obscura_page("https://example.com/a", "# Example\n\nSome   text.\n").unwrap();
+        assert_eq!(p.title, "Example");
+        assert_eq!(p.url, "https://example.com/a");
+        assert!(p.text.contains("Some text."));
+        let refused =
+            "```\nForbidden redirect target: redirect target is an internal address\n\n```";
+        assert!(obscura_page("https://example.com/r", refused)
+            .unwrap_err()
+            .contains("your own network"));
+        assert!(obscura_page("https://example.com/e", "  \n").is_err());
+    }
+
+    /// obscura, when there, reads the page before Chrome or a download.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn obscura_reads_first_when_installed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("friday-obscura-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("obscura");
+        std::fs::write(&bin, "#!/bin/sh\n[ \"$1\" = fetch ] || exit 2\nprintf '# Read by obscura\\n\\nThe page for %s\\n' \"$2\"\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let r = DefaultPageReader {
+            obscura: Some(bin.clone()),
+            ..DefaultPageReader::default()
+        };
+        let page = r.read("https://example.com/post").await.unwrap();
+        assert_eq!(page.title, "Read by obscura");
+        assert!(page.text.contains("The page for https://example.com/post"));
+        // A refusal stands: nothing else is asked to go there.
+        std::fs::write(
+            &bin,
+            "#!/bin/sh\necho 'Forbidden redirect target: redirect target is an internal address'\n",
+        )
+        .unwrap();
+        let err = r.read("https://example.com/redirect").await.unwrap_err();
+        assert!(err.contains("your own network"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
