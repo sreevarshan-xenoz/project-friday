@@ -75,6 +75,8 @@ PanelWindow {
     opacity: Answer.visible ? 1 : Math.min(1, height / 40)
     property bool followUpOpen: false
     property bool memoriesOpen: false
+    // The everyday chips show; the rest wait behind "More".
+    property bool moreOpen: false
 
     HoverHandler { id: hover }
 
@@ -87,7 +89,7 @@ PanelWindow {
     }
     Connections {
       target: Answer
-      function onSerialChanged() { card.followUpOpen = false; card.memoriesOpen = false; followUp.text = ""; quiet.restart(); }
+      function onSerialChanged() { card.followUpOpen = false; card.memoriesOpen = false; card.moreOpen = false; followUp.text = ""; quiet.restart(); }
     }
 
     ColumnLayout {
@@ -170,8 +172,9 @@ PanelWindow {
           wrapMode: Text.Wrap
           color: Theme.text
           font.family: Theme.sans
-          font.pixelSize: Theme.fontM
-          lineHeight: 1.15
+          // The answer reads a step larger than the question above it.
+          font.pixelSize: Theme.fontM + 2
+          lineHeight: 1.2
           onLinkActivated: function(link) { Qt.openUrlExternally(link); }
         }
       }
@@ -210,29 +213,30 @@ PanelWindow {
           primary: card.followUpOpen
           onClicked: { card.followUpOpen = true; followUp.forceActiveFocus(); }
         }
-        Chip { icon: Icons.history; text: "Full answer"; onClicked: Answer.openFull() }
-        Chip { icon: Icons.restart; text: "Ask again"; onClicked: { Answer.askAgain(); Answer.dismiss(); } }
+        Chip { visible: card.moreOpen; icon: Icons.history; text: "Full answer"; onClicked: Answer.openFull() }
+        Chip { visible: card.moreOpen; icon: Icons.restart; text: "Ask again"; onClicked: { Answer.askAgain(); Answer.dismiss(); } }
         Chip {
-          visible: Config.featureOn("look-again") && Answer.ok && Answer.mode === "--screen" && Answer.usedWindowText
+          visible: card.moreOpen && Config.featureOn("look-again") && Answer.ok && Answer.mode === "--screen" && Answer.usedWindowText
           icon: Icons.screen
           text: "Look again"
           onClicked: Answer.lookAgain()
         }
-        Chip { visible: Answer.goal !== ""; icon: Icons.close; text: "That was wrong"; onClicked: { Answer.markWrong(); Answer.dismiss(); } }
+        Chip { visible: card.moreOpen && Answer.goal !== ""; icon: Icons.close; text: "That was wrong"; onClicked: { Answer.markWrong(); Answer.dismiss(); } }
         Chip {
-          visible: Answer.ok && Answer.canTryAnother
+          visible: card.moreOpen && Answer.ok && Answer.canTryAnother
           icon: Icons.restart
           text: "Try another model"
           onClicked: { Answer.tryAnother(); Answer.dismiss(); }
         }
         Chip {
           // A finished answer's: never the last one's while a new one works.
-          visible: win.answering && Answer.memories.length > 0 && Config.featureOn("memories-used")
+          visible: card.moreOpen && win.answering && Answer.memories.length > 0 && Config.featureOn("memories-used")
           icon: Icons.memory
           text: "Used " + Answer.memories.length + (Answer.memories.length === 1 ? " memory" : " memories")
           primary: card.memoriesOpen
           onClicked: { card.memoriesOpen = !card.memoriesOpen; }
         }
+        Chip { text: card.moreOpen ? "Less" : "More"; onClicked: card.moreOpen = !card.moreOpen }
       }
 
       ColumnLayout {

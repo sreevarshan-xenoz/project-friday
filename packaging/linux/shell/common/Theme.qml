@@ -38,7 +38,7 @@ Singleton {
     outline: "#343842",
     text: "#dde0e6",
     subtext: "#b8bbc3",
-    faint: "#7d818b",
+    faint: "#9498a2",
     accent: "#d42d51",
     onAccent: "#fff4f6",
     signal: "#8ea4c8",
@@ -210,7 +210,7 @@ Singleton {
   readonly property string sans: "Space Grotesk"
   readonly property string display: "Michroma"
   readonly property string mono: "JetBrainsMono Nerd Font Propo"
-  readonly property int fontS: 11
+  readonly property int fontS: 12
   readonly property int fontM: 13
   readonly property int fontL: 16
   readonly property int fontXL: 22

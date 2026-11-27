@@ -1,7 +1,10 @@
 import QtQuick
+import Quickshell
 import qs.common
 
-// A round icon button. `active` fills it with the accent.
+// A round icon button. `active` fills it with the accent. Its `tooltip`
+// shows in a small label after the pointer rests on it for 600 ms (the
+// label's window exists only while it shows).
 Item {
   id: root
 
@@ -46,6 +49,38 @@ Item {
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onClicked: root.clicked()
+    onClicked: { tipDelay.stop(); root.tipShown = false; root.clicked(); }
+    onContainsMouseChanged: { root.tipShown = false; if (containsMouse && root.tooltip !== "") tipDelay.restart(); else tipDelay.stop(); }
+  }
+
+  property bool tipShown: false
+  Timer { id: tipDelay; interval: 600; onTriggered: root.tipShown = mouse.containsMouse }
+
+  Loader {
+    active: root.tipShown && root.visible
+    sourceComponent: PopupWindow {
+      anchor.item: root
+      anchor.edges: Theme.barAtBottom ? Edges.Top : Edges.Bottom
+      anchor.gravity: Theme.barAtBottom ? Edges.Top : Edges.Bottom
+      anchor.margins.top: Theme.barAtBottom ? 0 : 6
+      anchor.margins.bottom: Theme.barAtBottom ? 6 : 0
+      implicitWidth: tipText.implicitWidth + 20
+      implicitHeight: tipText.implicitHeight + 10
+      color: "transparent"
+      visible: true
+      Rectangle {
+        anchors.fill: parent
+        radius: height / 2
+        color: Theme.glass
+        border.width: 1
+        border.color: Theme.glassEdge
+        Label {
+          id: tipText
+          anchors.centerIn: parent
+          text: root.tooltip
+          font.pixelSize: Theme.fontS + 1
+        }
+      }
+    }
   }
 }

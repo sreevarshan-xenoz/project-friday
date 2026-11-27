@@ -105,6 +105,9 @@ FocusScope {
         font.weight: Font.DemiBold
         color: Theme.subtext
       }
+      // Two rows under their own names: "Ember" is both a bar style and a
+      // palette, and the labels keep them apart.
+      Label { text: "Bar style"; font.pixelSize: Theme.fontS; color: Theme.faint }
       Flow {
         Layout.fillWidth: true
         spacing: 6
@@ -124,6 +127,7 @@ FocusScope {
           }
         }
       }
+      Label { Layout.topMargin: 4; text: "Colours"; font.pixelSize: Theme.fontS; color: Theme.faint }
       Flow {
         Layout.fillWidth: true
         spacing: 6
