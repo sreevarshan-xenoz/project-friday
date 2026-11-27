@@ -51,10 +51,37 @@ async fn for_power(prefer: Option<String>) -> Option<String> {
         Some(b) if !b.charging => {}
         _ => return Some(p),
     }
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(800))
-        .build()
-        .unwrap_or_default();
+    let installed = installed_ollama().await;
+    Some(match smaller_sibling(model, &installed) {
+        Some(small) => format!("ollama/{small}"),
+        None => p,
+    })
+}
+
+/// Ollama's installed models, asked at most once a minute (a goal asks the
+/// model many times); none when it doesn't answer within 800 ms.
+async fn installed_ollama() -> Vec<crate::local_ai::FoundModel> {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    type Seen = Option<(Instant, Vec<crate::local_ai::FoundModel>)>;
+    static SEEN: Mutex<Seen> = Mutex::new(None);
+    static HTTP: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+    if let Some((at, models)) = SEEN.lock().unwrap().as_ref() {
+        if at.elapsed() < Duration::from_secs(60) {
+            return models.clone();
+        }
+    }
+    let Some(http) = HTTP
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_millis(800))
+                .build()
+                .ok()
+        })
+        .as_ref()
+    else {
+        return Vec::new();
+    };
     let tags = async {
         let r = http
             .get(format!("{}/api/tags", crate::local_ai::OLLAMA_URL))
@@ -64,23 +91,30 @@ async fn for_power(prefer: Option<String>) -> Option<String> {
         r.text().await.ok()
     }
     .await;
-    let installed = tags
+    let models = tags
         .as_deref()
         .map(crate::local_ai::parse_ollama_tags)
         .unwrap_or_default();
-    Some(match smaller_sibling(model, &installed) {
-        Some(small) => format!("ollama/{small}"),
-        None => p,
-    })
+    *SEEN.lock().unwrap() = Some((Instant::now(), models.clone()));
+    models
 }
 
 /// The largest installed model of `model`'s family at most 70% of its size;
 /// `None` when it isn't installed or has no such sibling.
 fn smaller_sibling(model: &str, installed: &[crate::local_ai::FoundModel]) -> Option<String> {
-    let family = |name: &str| name.split(':').next().unwrap_or(name).to_string();
-    let named = |m: &&crate::local_ai::FoundModel| {
-        m.name == model || (!model.contains(':') && m.name == format!("{model}:latest"))
+    // A model by its own name, whatever registry or namespace is in front
+    // (library/qwen2.5:7b, hf.co/x/qwen2.5:7b, host:5000/team/qwen2.5:7b);
+    // no tag is :latest. Its family is that name without the tag.
+    let own = |name: &str| {
+        let base = name.rsplit('/').next().unwrap_or(name).to_string();
+        if base.contains(':') {
+            base
+        } else {
+            format!("{base}:latest")
+        }
     };
+    let family = |name: &str| own(name).split(':').next().unwrap_or("").to_string();
+    let named = |m: &&crate::local_ai::FoundModel| own(&m.name) == own(model);
     let current = installed.iter().find(named)?.size_mb;
     installed
         .iter()
@@ -200,6 +234,19 @@ mod tests {
         // A name without a tag is its :latest.
         let latest = [m("gemma3:latest", 3300), m("gemma3:1b", 815)];
         assert_eq!(smaller_sibling("gemma3", &latest), Some("gemma3:1b".into()));
+        // A namespace or a registry with a port in front changes nothing.
+        assert_eq!(
+            smaller_sibling("library/qwen2.5:7b", &installed),
+            Some("qwen2.5:3b".into())
+        );
+        let hosted = [
+            m("localhost:5000/team/qwen2.5:7b", 4700),
+            m("localhost:5000/team/llama3.2:1b", 1300),
+        ];
+        assert_eq!(
+            smaller_sibling("localhost:5000/team/qwen2.5:7b", &hosted),
+            None
+        );
     }
 
     #[test]

@@ -5080,7 +5080,7 @@ action-check|Before a risky action, say what will change; after it, check and sa
 clipboard-clear|A password or key left on the clipboard is cleared after 2 minutes, with clips on or off
 always-allow|A harmless action (open an app, a link or a file; copy) can be allowed for good, per exact action, for 30 days
 mic-level|While FRIDAY listens, a thin bar in the answer card moves with your voice (red when the mic is muted)
-battery-model|On battery, a local model you picked gives way to a smaller one of its family you already have"
+battery-model|On battery, a local model you picked for asks or chores gives way to a smaller one of its family you already have"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
