@@ -182,10 +182,26 @@ FocusScope {
               source: parent.iconSource
               asynchronous: true
             }
+            // An app with no icon gets its initial on a tile, so a list of
+            // them doesn't read as the same glyph over and over.
+            Rectangle {
+              anchors.fill: parent
+              visible: !parent.isFriday && parent.isApp && parent.iconSource === ""
+              radius: 7
+              color: Theme.raised
+              border.width: 1
+              border.color: Theme.outline
+              Label {
+                anchors.centerIn: parent
+                text: (row.modelData.name || "?").charAt(0).toUpperCase()
+                font.weight: Font.DemiBold
+                color: Theme.subtext
+              }
+            }
             Glyph {
               anchors.centerIn: parent
-              visible: !parent.isFriday && parent.iconSource === ""
-              text: parent.isApp ? Icons.app : Icons.file
+              visible: !parent.isFriday && !parent.isApp && parent.iconSource === ""
+              text: Icons.file
               size: 22
               color: Theme.subtext
             }

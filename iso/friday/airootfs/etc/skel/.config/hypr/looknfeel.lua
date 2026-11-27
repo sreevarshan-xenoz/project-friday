@@ -48,3 +48,9 @@
 --     column_width = 0.97,
 --   },
 -- })
+
+-- FRIDAY Settings opens as a centred floating window at its own size, not
+-- tiled across the screen.
+hl.window_rule({match = {title = "^(FRIDAY Settings)$" }, float = true})
+hl.window_rule({match = {title = "^(FRIDAY Settings)$" }, size = {"860", "600"}})
+hl.window_rule({match = {title = "^(FRIDAY Settings)$" }, center = true})

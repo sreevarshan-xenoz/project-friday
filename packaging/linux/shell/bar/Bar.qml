@@ -87,14 +87,16 @@ PanelWindow {
       onClicked: Shell.toggle("launcher", bar.modelData.name)
     }
     Workspaces { screen: bar.modelData }
-    WindowTitle { Layout.maximumWidth: Math.max(0, bar.width / 2 - centre.width / 2 - 260) }
+    WindowTitle { Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
   }
 
   // Centre: the orb (FRIDAY drawer) and what it's doing, then the clock
-  // (calendar drawer).
+  // (calendar drawer). The clock stays at the bar's centre, right above the
+  // calendar drawer; what FRIDAY is doing grows to its left.
   RowLayout {
     id: centre
-    anchors.centerIn: strip
+    anchors.verticalCenter: strip.verticalCenter
+    x: Math.round(strip.x + strip.width / 2 - clock.implicitWidth / 2 - fridayButton.implicitWidth - spacing)
     spacing: 12
 
     Rectangle {

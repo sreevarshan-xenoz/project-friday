@@ -466,7 +466,7 @@ friday_lock_conf() {
     echo "    font_color = rgb($text)"
     echo "    font_family = Space Grotesk"
     echo "    fade_on_empty = false"
-    echo "    placeholder_text = <span foreground=\"##$subtext\">Password</span>"
+    echo "    placeholder_text = <span foreground=\"##$subtext\">Password for \$USER, then Enter</span>"
     echo "    fail_text = <i>\$PAMFAIL</i>"
     echo "    dots_spacing = 0.3"
     echo "    position = 0, $field_y"
@@ -498,7 +498,9 @@ friday_lock_conf() {
     fi
     echo "label {"
     echo "    monitor ="
-    echo "    text = FRIDAY  ·  \$USER"
+    # The wordmark alone: "FRIDAY · friday" read like a glitch (the user
+    # is named in the password field instead).
+    echo "    text = FRIDAY"
     echo "    color = rgb($accent)"
     echo "    font_size = 13"
     echo "    font_family = Michroma"

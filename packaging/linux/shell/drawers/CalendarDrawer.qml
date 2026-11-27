@@ -19,12 +19,15 @@ FocusScope {
   readonly property date today: clock.date
   readonly property date month: new Date(today.getFullYear(), today.getMonth() + offset, 1)
 
-  // Monday-first grid of 42 days covering the month.
+  // Monday-first grid covering the month: five weeks when it fits, six when
+  // it needs them (never a whole row of next month's days).
   readonly property var days: {
     const first = new Date(month.getFullYear(), month.getMonth(), 1);
     const lead = (first.getDay() + 6) % 7;
+    const length = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+    const cells = lead + length > 35 ? 42 : 35;
     const out = [];
-    for (let i = 0; i < 42; i++)
+    for (let i = 0; i < cells; i++)
       out.push(new Date(month.getFullYear(), month.getMonth(), 1 - lead + i));
     return out;
   }
@@ -75,6 +78,7 @@ FocusScope {
         Label {
           required property string modelData
           Layout.fillWidth: true
+          Layout.preferredWidth: 1  // equal columns, whatever the text
           horizontalAlignment: Text.AlignHCenter
           text: modelData
           font.pixelSize: Theme.fontS
@@ -89,6 +93,7 @@ FocusScope {
           readonly property bool inMonth: modelData.getMonth() === root.month.getMonth()
           readonly property bool isToday: modelData.toDateString() === root.today.toDateString()
           Layout.fillWidth: true
+          Layout.preferredWidth: 1
           implicitHeight: 34
           radius: 9
           color: isToday ? Theme.accent : "transparent"
