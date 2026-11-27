@@ -73,14 +73,20 @@ Singleton {
 
   readonly property var current: obj(parsed.current)
   readonly property bool working: running && current !== null && current.active === true
-  readonly property string goal: current ? str(current.goal) : ""
+  // The question alone: the daemon's goal also carries what went with it
+  // ("\n\n[docs]\n…", "[selection]", …), which isn't for showing.
+  function question(g) {
+    const i = g.search(/\n\n\[[a-z][a-z -]*\]\n/);
+    return (i < 0 ? g : g.slice(0, i)).trim();
+  }
+  readonly property string goal: current ? question(str(current.goal)) : ""
   readonly property string phase: current ? str(current.phase) : ""
   // The answer so far while it streams (state.json current.partial).
   readonly property string partial: working ? str(current.partial) : ""
   readonly property int phaseIndex: phases.indexOf(phase)
 
   readonly property var last: obj(parsed.last_goal)
-  readonly property string lastGoal: last ? str(last.goal) : ""
+  readonly property string lastGoal: last ? question(str(last.goal)) : ""
   readonly property string lastOutcome: last ? str(last.outcome) : ""
   readonly property string lastDetail: last ? str(last.result || last.error || last.failed_reason) : ""
   readonly property bool lastFailed: /fail|error|abort|cancel/i.test(lastOutcome)
