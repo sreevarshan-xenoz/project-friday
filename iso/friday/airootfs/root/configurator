@@ -580,8 +580,14 @@ step_apps() {
   screen 8 "CODE EDITORS"
   friday_head "Which code editors do you want?"
   friday_say "Pick any, or none. Press x to turn a line on or off, Enter to go on."
+  friday_note "  All of these picks every line, whatever else is ticked."
   echo
   EDITORS=$(friday_pick_many "$EDITORS" "${FRIDAY_EDITORS[@]}")
+  # VS Code and its open-source build can't both be installed: keep VS Code.
+  if [[ " $EDITORS " == *" vscode "* && " $EDITORS " == *" code "* ]]; then
+    EDITORS=$(sed 's/\(^\| \)code\( \|$\)/ /' <<<" $EDITORS " | xargs)
+    friday_note "  VS Code and Code - OSS can't both be installed; keeping VS Code."
+  fi
   friday_ok "Editors: $(friday_apps_label "$EDITORS" "${FRIDAY_EDITORS[@]}")"
   screen 8 "AI CODING AGENTS"
   friday_head "Which AI coding agents do you want?"

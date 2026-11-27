@@ -106,10 +106,11 @@ friday_app_name() {
   esac
 }
 
-# friday_download_mb: MB in the new system's package cache and home so far.
+# friday_download_mb: MB in the new system's package cache and the user's
+# ~/.local (npm and agy) so far; never the AUR build trees, too big to walk.
 friday_download_mb() {
   local mb
-  mb=$(du -smc /mnt/var/cache/pacman/pkg "/mnt${USER_HOME:-/nonexistent}" 2>/dev/null | tail -n 1 | cut -f1)
+  mb=$(du -smc /mnt/var/cache/pacman/pkg "/mnt${USER_HOME:-/nonexistent}/.local" 2>/dev/null | tail -n 1 | cut -f1)
   echo "${mb:-0}"
 }
 
@@ -143,7 +144,7 @@ live_status_start() {
     while true; do
       recent=$(tail -c +"$((from + 1))" "$LOG_FILE" 2>/dev/null | tail -n 60 | tr '\r' '\n')
       line=$(grep -oE '\(\s*[0-9]+/[0-9]+\) (installing|upgrading|checking|downloading|loading|resolving)[^ ]* ?[^ ]*|downloading [^ ]+|:: [A-Za-z ]+\.\.\.|Building [^ ]+|Installed [^ ]+' <<<"$recent" | tail -n 1)
-      if (( i % 7 == 0 )); then
+      if (( i % 14 == 0 )); then  # every 2 s
         now=$(friday_download_mb); got=$(( now - base )); (( got < 0 )) && got=0
         if (( SECONDS > last_t )); then
           rate=$(( (now - last_mb) / (SECONDS - last_t) )); last_mb=$now last_t=$SECONDS
@@ -418,6 +419,8 @@ friday_app_source() { # <id> -> repo:<pkg> | aur:<pkg> | npm:<pkg> | agy
   esac
 }
 user_apps=()
+# VS Code and Code - OSS conflict: with both picked, VS Code wins.
+[[ " ${EDITORS:-} " == *" vscode "* ]] && EDITORS=$(sed 's/\(^\| \)code\( \|$\)/ /' <<<" $EDITORS " | xargs)
 for app in ${EDITORS:-} ${AGENTS:-}; do
   src=$(friday_app_source "$app")
   case "$src" in
