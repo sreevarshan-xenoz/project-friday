@@ -30,14 +30,17 @@ Singleton {
       stat.reload();
       meminfo.reload();
       const f = (stat.text().split("\n")[0] || "").trim().split(/\s+/).slice(1).map(Number);
-      const idle = (f[3] || 0) + (f[4] || 0), total = f.reduce((a, b) => a + b, 0);
+      // user..steal: guest time is already inside user and nice.
+      const idle = (f[3] || 0) + (f[4] || 0), total = f.slice(0, 8).reduce((a, b) => a + b, 0);
       if (root.last && total > root.last.total)
         root.cpu = Math.max(0, Math.min(1, 1 - (idle - root.last.idle) / (total - root.last.total)));
       root.last = { idle: idle, total: total };
       const m = meminfo.text();
       const kb = k => Number((m.match(new RegExp("^" + k + ":\\s+(\\d+)", "m")) || [0, 0])[1]);
+      // Kernels without MemAvailable: free plus page cache.
+      const avail = kb("MemAvailable") || kb("MemFree") + kb("Buffers") + kb("Cached");
       if (kb("MemTotal") > 0)
-        root.mem = 1 - kb("MemAvailable") / kb("MemTotal");
+        root.mem = Math.max(0, 1 - avail / kb("MemTotal"));
     }
   }
 }
