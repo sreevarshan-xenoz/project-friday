@@ -161,6 +161,7 @@ Skill Forge:
 Desktop & System Substrate:
   friday shell [start|restart|stop] Run FRIDAY Shell (bar, drawers, notifications)
   friday shell <drawer>            Toggle a drawer: friday control calendar launcher session
+  friday shell overview            Every workspace with its windows (Super+Tab)
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
   friday shell style [name]        Shell style: ember, lean, island, dock (lists without a name)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
@@ -7614,7 +7615,8 @@ $offer"
       ipc)     shift; exec quickshell -p "$dir" ipc call -- "$@" ;;
       friday|control|calendar|launcher|session)
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
-      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
+      overview) exec quickshell -p "$dir" ipc call overview toggle ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
     esac
     ;;
   daemon)
