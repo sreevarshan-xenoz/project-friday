@@ -93,11 +93,11 @@ PanelWindow {
 
     // Plain cards (floating styles, the rail, the statusline) or, in the
     // ember styles, a body with shoulders that grows out of the bar.
-    readonly property bool card: Theme.floating || Theme.rail || Theme.statusline
+    readonly property bool card: Theme.floating || Theme.rail || Theme.statusline || Theme.taskbar
     // Ember: room for the shoulders either side. A card: just the card.
     readonly property real shoulder: card ? 0 : Theme.fillet
     // A card's distance from the screen's side.
-    readonly property real side: Theme.floating ? Theme.barInset : Theme.statusline ? Theme.gap : -Theme.fillet
+    readonly property real side: Theme.floating ? Theme.barInset : Theme.statusline || Theme.taskbar ? Theme.gap : -Theme.fillet
 
     width: bodyW + 2 * shoulder
     height: bodyH * host.reveal

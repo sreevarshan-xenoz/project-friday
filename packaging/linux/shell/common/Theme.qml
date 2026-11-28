@@ -36,6 +36,8 @@ import Quickshell.Io
 //           and the status at the top right; the middle stays clear
 //   blade   flush, with a hairline under it that follows the active
 //           workspace; volume and brightness slide open on hover
+//   taskbar one bar along the bottom laid out the way Windows does: apps,
+//           FRIDAY and the running apps in the middle
 //   glaze   one floating glass bar along the top with a lit rim; a band of
 //           FRIDAY's colours sweeps along it while it works
 //   statusline  one slim solid line along the bottom, in terminal-style
@@ -327,7 +329,9 @@ Singleton {
   readonly property bool keystone: style === "keystone"
   // The statusline: one slim solid line along the bottom, in segments.
   readonly property bool statusline: style === "statusline"
-  readonly property bool barAtBottom: style === "dock" || statusline
+  // The taskbar: one bar along the bottom, laid out the way Windows does.
+  readonly property bool taskbar: style === "taskbar"
+  readonly property bool barAtBottom: style === "dock" || statusline || taskbar
   readonly property int barInset: floating ? 10 : 0
   // How far from its screen edge the bar's far side is (windows start there).
   readonly property int barReach: rail ? 0 : barHeight + barInset
@@ -335,7 +339,7 @@ Singleton {
   // Geometry. In the ember style the bar is flush with the top edge and
   // flows into the screen through two concave corners; drawers grow out of
   // it the same way.
-  readonly property int barHeight: statusline ? 24 : 36
+  readonly property int barHeight: statusline ? 24 : taskbar ? 48 : 36
   readonly property int fillet: 16
   readonly property int radius: 20
   readonly property int radiusS: 10
