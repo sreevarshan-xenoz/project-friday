@@ -72,6 +72,10 @@ Singleton {
   readonly property bool dock: pick("dock", false) === true
   // The shelf on the right edge (off unless turned on).
   readonly property bool shelf: pick("shelf", false) === true
+  // The desktop pet: one of FRIDAY's characters, or "off" (switch: desktop-pet).
+  readonly property var pets: ["mote"]
+  readonly property string pet: pets.includes(pick("pet", "mote")) ? pick("pet", "mote") : "off"
+  readonly property bool petShown: pet !== "off" && featureOn("desktop-pet")
   // The bar slides away until the pointer reaches its edge (off unless on).
   readonly property bool barAutoHide: pick("barAutoHide", false) === true
   // The concave corners where a flush bar meets the screen (off: plain).

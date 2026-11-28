@@ -21,6 +21,7 @@ HOSTNAME="" USERNAME="" PASSWORD=""
 KEYBOARD="us" TIMEZONE="UTC"
 THEME="FRIDAY Shell Core (obsidian and core red; the FRIDAY OS look)"
 SHELL_STYLE="Lean (thin borders, small gaps, no blur; the FRIDAY OS look)"
+SHELL_PET="Mote (a little smoke creature; it thinks while FRIDAY works)"
 SESSION="Hyprland (tiling, the FRIDAY OS default)"
 SDDM_THEME="SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)"
 BROWSERS=""
@@ -430,6 +431,13 @@ step_look() {
       "Neon (slim and square-cut, a hairline of accent under it)" \
       "Monolith (one solid square slab along the top, like a HUD)") && SHELL_STYLE="$v"
     friday_ok "$SHELL_STYLE"
+    echo
+    friday_head "Desktop pet"
+    friday_note "  A small creature in the corner that shows when FRIDAY is thinking; click it to ask."
+    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=3 --selected="$SHELL_PET" \
+      "Mote (a little smoke creature; it thinks while FRIDAY works)" \
+      "No pet") && SHELL_PET="$v"
+    friday_ok "$SHELL_PET"
   fi
   echo
   friday_head "Login screen"
@@ -988,7 +996,7 @@ friday_banner
 friday_say "Thanks, $USERNAME. I'll take it from here."
 sleep 1
 FRIDAY_HOSTNAME="$HOSTNAME"
-export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE BROWSERS DEFAULT_BROWSER EDITORS AGENTS FILE_MANAGER TERMINAL_APP VIDEO_PLAYER IMAGE_VIEWER PDF_VIEWER MORE_APPS GIT_NAME GIT_EMAIL GITHUB_USER GITHUB_BACKUP
+export INSTALL_MODE FRIDAY_SIZE_MB BOOT_DEFAULT BITLOCKER_ACK TARGET_DISK KEYBOARD HOSTNAME FRIDAY_HOSTNAME USERNAME PASSWORD TIMEZONE THEME SHELL_STYLE SHELL_PET SESSION SDDM_THEME FRIDAY_AI_PROVIDERS FRIDAY_AI_KEYS FRIDAY_LOCAL_ENGINE FRIDAY_LOCAL_BUDGET_MB FRIDAY_LOCAL_MODEL AUTOLOGIN ENCRYPT FEAT_DESKTOP FEAT_TASKS FEAT_APPNAME FEAT_SCREENTEXT FEAT_PHONE BROWSERS DEFAULT_BROWSER EDITORS AGENTS FILE_MANAGER TERMINAL_APP VIDEO_PLAYER IMAGE_VIEWER PDF_VIEWER MORE_APPS GIT_NAME GIT_EMAIL GITHUB_USER GITHUB_BACKUP
 # The person confirmed erasing this disk (or adding FRIDAY next to what's on
 # it) on the review screen.
 if [[ "$INSTALL_MODE" == alongside ]]; then

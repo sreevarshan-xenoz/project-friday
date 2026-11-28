@@ -43,6 +43,10 @@ fi
 src=$(cd "$(dirname "$0")/../linux/shell" && find . -name '*.qml' | wc -l)
 pkgd=$(grep -c '^usr/share/friday/shell/.*\.qml$' <<<"$files")
 [[ "$src" -eq "$pkgd" ]] && ok "FRIDAY Shell: $pkgd QML files" || bad "FRIDAY Shell: $pkgd of $src QML files packaged"
+# The desktop pets' sprite sheets too.
+src=$(cd "$(dirname "$0")/../linux/shell" && find . -name '*.png' | wc -l)
+pkgd=$(grep -c '^usr/share/friday/shell/.*\.png$' <<<"$files")
+[[ "$src" -eq "$pkgd" ]] && ok "FRIDAY Shell: $pkgd pet sheets" || bad "FRIDAY Shell: $pkgd of $src pet sheets packaged"
 
 if command -v namcap >/dev/null; then
   echo "namcap"

@@ -193,6 +193,21 @@ FocusScope {
           }
         }
       }
+      Label { Layout.topMargin: 4; text: "Desktop pet"; font.pixelSize: Theme.fontS; color: Theme.faint }
+      Flow {
+        Layout.fillWidth: true
+        spacing: 6
+        Repeater {
+          model: ["off"].concat(Config.pets)
+          Chip {
+            required property string modelData
+            text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
+            primary: Config.pet === modelData
+            implicitHeight: 28
+            onClicked: Config.set("pet", modelData)
+          }
+        }
+      }
       // The bar's switches: lit when on, a click flips one.
       Label { Layout.topMargin: 4; text: "Bar"; font.pixelSize: Theme.fontS; color: Theme.faint }
       Flow {
