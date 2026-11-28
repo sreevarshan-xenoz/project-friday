@@ -20,7 +20,7 @@ clients and that service is the **Mobile Protocol** (`services/mobile/src/protoc
 
 | Path | Status | Notes |
 | ---- | ------ | ----- |
-| `android/` | Build-verified (M6.2b) | First official client; see its README |
+| `android/` | Archived (2026-11-28) | Moved to its own repo, friday-mobile |
 | `desktop/` | planned | Product UI is `frontend/` (Tauri) |
 | `web/` | planned | future (dashboard/tablet companion) |
 | `tablet/` | planned | future |

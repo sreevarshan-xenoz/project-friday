@@ -21,8 +21,6 @@ crates live here.
 | `friday-knowledge` | `knowledge/` | **Knowledge Graph + World Model** — entities, relationships, state; world model wiring for planning | ✅ |
 | `friday-simulation` | `simulation/` | Plan simulation / dry-run / validation / optimization / approval | ✅ |
 | `friday-intelligence` | `intelligence/` | **Inference Fabric** — provider registry (llama.cpp, Ollama, OmniRoute, Gemini, OpenGateway, …), capability-based routing, qualification profiles, health telemetry, request timeouts, prompt compiler, response interpreter | ✅ |
-| `friday-recovery` | `recovery/` | Recovery graph, failure taxonomy, confidence model | ✅ (shadow mode in runtime) |
-| `friday-benchmark` | `benchmark/` | Resilience dashboard, MTBF / first-pass / recovery metrics | ✅ |
 | `friday-sensors` | `sensors/` | Sensor surface for the cognitive OS | 🟡 Early |
 | `friday-cognitive` | `cognitive/` | Cognitive Runtime scaffold (`specs/cognitive-runtime.md`) | 🟡 Early |
 | `friday-reflection` | `reflection/` | Reflection types (`specs/reflection-engine.md`) | 🟡 Early |

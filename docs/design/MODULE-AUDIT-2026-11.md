@@ -103,6 +103,16 @@ every ask takes, for no change a person would see. What was missing was
 learning from failures, and `lessons.rs` does that. Revisit if one of them
 starts costing something (build time, a bug it causes).
 
+## Archived after the full audit (2026-11-28)
+
+`benchmark` (a resilience dashboard nothing ran) and `recovery` (used only by
+`benchmark`) left the workspace, with three folders nothing builds:
+`frontend/` (the React prototype from August, replaced by FRIDAY Shell and the
+Windows tray), `clients/android` and `artifacts/android` (the phone app now
+lives in its own repo, friday-mobile), and `scripts/dev-portal.ps1`, which
+started that prototype. `simulation` stays: the `e2e` crate uses it. Restore
+any of them with `git checkout 2cfc1835 -- <path>`.
+
 ## Rules for what comes next
 
 - Nothing gets wired in to raise a count. A candidate goes in when a person
