@@ -275,7 +275,7 @@ shell_window_look() {
       # dock) keeps Hyprland and FRIDAY Shell redrawing it several times a
       # second, measured at 3-4 cores in a VM. Those use a fuller fill instead.
       echo "-- Frosted glass behind FRIDAY Shell's small and passing surfaces (see-through pixels stay clear)."
-      echo "hl.layer_rule({ match = { namespace = \"^friday-(bar|drawer|notifications|answer|osd|polkit|tour|overview|wallpaper)$\" }, blur = true, ignore_alpha = 0.2 })"
+      echo "hl.layer_rule({ match = { namespace = \"^friday-(bar|drawer|notifications|answer|osd|polkit|tour|overview|wallpaper|captions|ring)$\" }, blur = true, ignore_alpha = 0.2 })"
     fi
   } >"${conf%/*}/hypr-look.lua.tmp" && mv -f "${conf%/*}/hypr-look.lua.tmp" "${conf%/*}/hypr-look.lua"
   {
