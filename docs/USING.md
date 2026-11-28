@@ -85,7 +85,15 @@ keys, but their free tiers may keep or train on what is sent. Add a key with
 `friday free-tiers on apisfreellm` needs no key at all: apisfreellm.com
 answers with one ~35B model (`free-ai`, 32k context, about 10,000 requests a
 day). It names no operator and no terms, and it records each request's IP
-address and reads every prompt, so never send it anything private. `friday free-tiers list`
+address and reads every prompt, so never send it anything private.
+
+FreeInference, a free research service run by Harvard SEAS's MadSys lab, has
+three free models (DeepSeek V4 Flash and GLM 5.3 Flash with 1M tokens of
+context, Qwen 3.6 35B with 262k). Sign up with an email at freeinference.org,
+then `friday setup-ai --keep-others freeinference` and
+`friday free-tiers on freeinference`. It logs every prompt and answer for
+research and may publish anonymised data from them, and it publishes no rate
+limits, so treat it as public too. `friday free-tiers list`
 shows which are on; `friday free-tiers off groq` stops using one.
 
 Once on, it answers like your other models, the screen and selections too.
