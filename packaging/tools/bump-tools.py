@@ -26,7 +26,8 @@ from typing import Any
 ROOT = os.path.dirname(os.path.abspath(__file__))
 MANIFEST = os.environ.get("TOOLS_JSON", os.path.join(ROOT, "tools.json"))
 TRAY_PINS = os.environ.get(
-    "TRAY_PINS", os.path.join(ROOT, "..", "..", "windows-tray", "FridayTray.Core", "ObscuraInstaller.cs")
+    "TRAY_PINS",
+    os.path.join(ROOT, "..", "..", "windows-tray", "FridayTray.Core", "ObscuraInstaller.cs"),
 )
 summary: list[str] = []
 
