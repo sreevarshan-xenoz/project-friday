@@ -175,6 +175,8 @@ check() { # check <description> <remote command>: pass when the command exits 0
 
 echo "installed system"
 check "computer is named friday" '[ "$(cat /etc/hostname)" = friday ]'
+# Boot shows FRIDAY's splash (and its disk-password prompt), not systemd's text.
+check "boot shows FRIDAY's splash (plymouth and its theme in the initramfs)" 'grep -q " quiet splash " /boot/loader/entries/arch.conf && lsinitcpio /boot/initramfs-linux.img | grep -q "themes/omarchy/logo.png"'
 check "home folders are private" '[ "$(stat -c %a ~)" = 700 ] && [ "$(stat -c %a /root)" = 700 ]'
 check "CPU microcode is installed" 'pacman -Q intel-ucode amd-ucode >/dev/null'
 check "Hyprland session is running" 'hyprctl version >/dev/null'
