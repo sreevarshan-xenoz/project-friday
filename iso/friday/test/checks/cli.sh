@@ -1977,6 +1977,10 @@ bash "$F" feature meeting-notes on >/dev/null
 : >"$LOG"; out=$(bash "$F" meeting </dev/null)
 contains "without --yes and no local model it asks first" "$out" "Nothing sent."
 if grep -q "meeting transcript" "$LOG"; then fail "sent a transcript without a yes"; else pass "no transcript sent without a yes"; fi
+{ echo "09:00:00 FIRSTWORDS of a long call"; for i in $(seq 1 400); do printf '09:%02d:%02d we talked about the roadmap for a while\n' $((i / 60 % 60)) $((i % 60)); done; } >"$HOME/.local/share/friday/captions/2026-11-22-0900.txt"
+: >"$LOG"; bash "$F" meeting "$HOME/.local/share/friday/captions/2026-11-22-0900.txt" --yes >/dev/null
+contains "a long call's start is read too" "$(cat "$LOG")" "FIRSTWORDS"
+contains "and its end" "$(cat "$LOG")" "09:06:40 we talked"
 rm -rf "$HOME/.local/share/friday/captions"
 if grep -q "^friday-ctl '" "$LOG"; then fail "keeping an idea asked the AI"; else pass "keeping an idea asks no AI"; fi
 : >"$LOG"; bash "$F" ask "we decided to compute the index from the logs"; sleep 0.3
