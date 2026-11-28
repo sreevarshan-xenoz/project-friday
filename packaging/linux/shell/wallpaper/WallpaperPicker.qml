@@ -162,8 +162,17 @@ PanelWindow {
         PathAttribute { name: "k"; value: 0 }
       }
 
-      WheelHandler {
-        onWheel: e => { if (e.angleDelta.y < 0 || e.angleDelta.x < 0) arc.incrementCurrentIndex(); else arc.decrementCurrentIndex(); }
+      // Scrolling steps along the arc. (A button-less MouseArea over the
+      // pictures: a WheelHandler here never got the wheel events.)
+      MouseArea {
+        anchors.fill: parent
+        z: 100
+        acceptedButtons: Qt.NoButton
+        onWheel: e => {
+          const d = e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x;
+          if (d < 0) arc.incrementCurrentIndex();
+          else if (d > 0) arc.decrementCurrentIndex();
+        }
       }
 
       delegate: Item {
