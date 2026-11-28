@@ -4,56 +4,56 @@ import Quickshell
 import Quickshell.Wayland
 import qs.common
 
-// Rounded screen corners (switch: screen-corners): four small black
-// fillets over the screen's corners, so the desktop, the bar and full-screen
-// windows all meet the bezel in a curve. Four tiny surfaces that never
-// redraw and let every click through.
-Scope {
+// Rounded screen corners (switch: screen-corners): four small black fillets
+// over the screen's corners, so the desktop, the bar and full-screen windows
+// all meet the bezel in a curve. One click-through surface over the screen,
+// not one per corner: each surface FRIDAY Shell keeps up costs memory of its
+// own (about 60 MB each under software rendering), far more than its pixels.
+LazyLoader {
   id: root
 
   required property ShellScreen modelData
   readonly property int size: 14
 
-  Variants {
-    model: Config.featureOn("screen-corners") ? [0, 1, 2, 3] : []
+  active: Config.featureOn("screen-corners")
 
-    PanelWindow {
-      id: corner
-      required property int modelData
-      readonly property bool left: modelData === 0 || modelData === 2
-      readonly property bool top: modelData < 2
+  PanelWindow {
+    screen: root.modelData
+    anchors { top: true; bottom: true; left: true; right: true }
+    exclusionMode: ExclusionMode.Ignore
+    color: "transparent"
+    // Takes no input anywhere.
+    mask: Region {}
+    WlrLayershell.namespace: "friday-corner"
+    WlrLayershell.layer: WlrLayer.Overlay
 
-      screen: root.modelData
-      anchors { top: corner.top; bottom: !corner.top; left: corner.left; right: !corner.left }
-      implicitWidth: root.size
-      implicitHeight: root.size
-      exclusionMode: ExclusionMode.Ignore
-      color: "transparent"
-      mask: Region {}
-      WlrLayershell.namespace: "friday-corner"
-      WlrLayershell.layer: WlrLayer.Overlay
-
-      // The area between the corner point and a quarter circle.
+    Repeater {
+      model: [0, 1, 2, 3]
+      // The area between a corner point and a quarter circle.
       Shape {
-        anchors.fill: parent
+        id: corner
+        required property int modelData
+        readonly property bool atLeft: modelData === 0 || modelData === 2
+        readonly property bool atTop: modelData < 2
+        x: atLeft ? 0 : parent.width - root.size
+        y: atTop ? 0 : parent.height - root.size
+        width: root.size
+        height: root.size
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
           fillColor: "black"
           strokeWidth: -1
-          readonly property real s: root.size
-          readonly property real cx: corner.left ? 0 : s
-          readonly property real cy: corner.top ? 0 : s
-          startX: cx
-          startY: cy
-          PathLine { x: corner.left ? root.size : 0; y: corner.top ? 0 : root.size }
+          startX: corner.atLeft ? 0 : root.size
+          startY: corner.atTop ? 0 : root.size
+          PathLine { x: corner.atLeft ? root.size : 0; y: corner.atTop ? 0 : root.size }
           PathArc {
-            x: corner.left ? 0 : root.size
-            y: corner.top ? root.size : 0
+            x: corner.atLeft ? 0 : root.size
+            y: corner.atTop ? root.size : 0
             radiusX: root.size
             radiusY: root.size
-            direction: corner.left === corner.top ? PathArc.Counterclockwise : PathArc.Clockwise
+            direction: corner.atLeft === corner.atTop ? PathArc.Counterclockwise : PathArc.Clockwise
           }
-          PathLine { x: corner.left ? 0 : root.size; y: corner.top ? 0 : root.size }
+          PathLine { x: corner.atLeft ? 0 : root.size; y: corner.atTop ? 0 : root.size }
         }
       }
     }
