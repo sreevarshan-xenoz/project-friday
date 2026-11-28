@@ -69,8 +69,10 @@ Singleton {
     onNotification: n => {
       n.tracked = true;
       n.closed.connect(() => root.hidePopup(n));
-      if (!root.dnd || n.urgency === NotificationUrgency.Critical)
+      if (!root.dnd || n.urgency === NotificationUrgency.Critical) {
         root.popups = [n].concat(root.popups).slice(0, 5);
+        if (!root.isFriday(n)) Sounds.play("notify");
+      }
     }
   }
 }

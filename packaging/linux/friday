@@ -87,7 +87,7 @@ Autonomous Agent & Cognitive Loop:
   friday dictations [copy <n>|clear]  The last 20 voice-typed texts, to get one back
   friday llmfit [install|remove|status]  The tool behind friday local-ai fit (pinned, checksum-verified)
   friday obscura [install|remove|status]  A light browser FRIDAY reads web pages with (pinned, checksum-verified)
-  friday sounds [on|off]           Quiet sounds for listening, an answer done, one that failed
+  friday sounds [on|neon|off]      Quiet sounds for listening, an answer done, one that failed (neon: FRIDAY's own set, in FRIDAY Shell too)
   friday activity                  Agent steps waiting for you, runs going now, standing tasks, runs finished lately
   friday providers                 How each AI provider is doing (limit hit, OK…) and who answered last
   friday model [ask|screen|chores] [provider/model|auto]  The model each job tries first
@@ -428,6 +428,7 @@ friday_wallpaper() {
   mv -f "$tmp" "$conf"
   friday_wallpaper_show
   shell_window_look
+  [ -z "$f" ] || friday_cue wallpaper
   if [ -n "$f" ]; then echo "Wallpaper: $f${accent:+ (accent $accent)}"; else echo "FRIDAY no longer sets a wallpaper."; fi
 }
 
@@ -1856,19 +1857,27 @@ friday_conversation_end() {
   return 1
 }
 # friday_chime: the short sound that means "FRIDAY is listening now".
-# Soft state sounds (friday sounds on; off unless turned on): the desktop's
-# own quiet cues for listening, an answer done, and one that failed.
+# Soft state sounds (friday sounds on; off unless turned on): quiet cues for
+# listening, an answer done, one that failed. The set is the desktop's own
+# (freedesktop) or FRIDAY's Neon set (friday sounds neon), which also has a
+# cue for a new wallpaper and is the one FRIDAY Shell plays for
+# notifications and drawers. The flag file holds the set's name.
 friday_sounds_flag() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/sounds"; }
-friday_cue() { # listening|done|failed
-  [ -e "$(friday_sounds_flag)" ] && friday_feature_on state-sounds || return 0
-  local name
-  case "$1" in
-    listening) name=message ;;
-    done) name=complete ;;
-    failed) name=dialog-error ;;
-    *) return 0 ;;
-  esac
-  local f="${FRIDAY_SOUNDS_DIR:-/usr/share/sounds/freedesktop/stereo}/$name.oga"
+friday_cue() { # listening|done|failed|wallpaper
+  local flag; flag=$(friday_sounds_flag)
+  [ -e "$flag" ] && friday_feature_on state-sounds || return 0
+  local f
+  if [ "$(head -c 16 "$flag" 2>/dev/null)" = neon ]; then
+    case "$1" in
+      listening) f=listen ;; done) f=done ;; failed) f=error ;; wallpaper) f=wallpaper ;; *) return 0 ;;
+    esac
+    f="${FRIDAY_NEON_SOUNDS_DIR:-/usr/share/friday/sounds/neon}/$f.oga"
+  else
+    case "$1" in
+      listening) f=message ;; done) f=complete ;; failed) f=dialog-error ;; *) return 0 ;;
+    esac
+    f="${FRIDAY_SOUNDS_DIR:-/usr/share/sounds/freedesktop/stereo}/$f.oga"
+  fi
   [ -f "$f" ] && command -v pw-play >/dev/null 2>&1 || return 0
   ( timeout 3 pw-play --volume 0.5 "$f" >/dev/null 2>&1 & ) || true
 }
@@ -1911,12 +1920,17 @@ friday_tool() { # <name> [install|remove|status]
     *) echo "Usage: friday $name [install|remove|status]" >&2; return 2 ;;
   esac
 }
-friday_sounds() { # [on|off|status]
+friday_sounds() { # [on|neon|off|status]
+  local flag; flag=$(friday_sounds_flag)
   case "${1:-status}" in
-    on) mkdir -p "$(dirname "$(friday_sounds_flag)")"; : >"$(friday_sounds_flag)"; echo "Sounds: on (listening, done, failed)."; friday_cue done ;;
-    off) rm -f "$(friday_sounds_flag)"; echo "Sounds: off." ;;
-    status) if [ -e "$(friday_sounds_flag)" ]; then echo "Sounds: on"; else echo "Sounds: off (friday sounds on)"; fi ;;
-    *) echo "Usage: friday sounds [on|off|status]" >&2; return 2 ;;
+    on) mkdir -p "$(dirname "$flag")"; : >"$flag"; echo "Sounds: on (listening, done, failed)."; friday_cue done ;;
+    neon) mkdir -p "$(dirname "$flag")"; echo neon >"$flag"; echo "Sounds: on, the Neon set (listening, done, failed, a new wallpaper; FRIDAY Shell: notifications and drawers)."; friday_cue done ;;
+    off) rm -f "$flag"; echo "Sounds: off." ;;
+    status)
+      if [ ! -e "$flag" ]; then echo "Sounds: off (friday sounds on, or friday sounds neon)"
+      elif [ "$(head -c 16 "$flag" 2>/dev/null)" = neon ]; then echo "Sounds: on (Neon set)"
+      else echo "Sounds: on"; fi ;;
+    *) echo "Usage: friday sounds [on|neon|off|status]" >&2; return 2 ;;
   esac
 }
 friday_chime() {
@@ -5167,6 +5181,7 @@ wallpaper-fade|A new wallpaper fades in over the old one (FRIDAY Shell; none wit
 bar-resources|FRIDAY Shell's bar shows how much CPU and memory are in use (warning colour when either runs hot)
 desktop-pet|FRIDAY Shell's desktop pet in the bottom-right corner (friday shell pet picks which)
 bar-tools|FRIDAY Shell's bar has small tools: snip a part of the screen, pick a colour (hex copied), mute the microphone
+shell-sounds|With friday sounds neon: FRIDAY Shell plays soft sounds for notifications and for drawers opening and closing
 clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (known when friday clips are on); password-manager copies never are
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all

@@ -72,6 +72,9 @@ notify() {
 echo "FRIDAY Shell"
 fresh_home friday
 FS="$REPO_ROOT/packaging/linux/shell"
+# The Neon sound set is on (friday sounds neon); pw-play only notes what it played.
+mkdir -p "$HOME/.config/friday"; echo neon >"$HOME/.config/friday/sounds"
+printf '#!/bin/sh\necho "$*" >>"%s/pwplay.log"\n' "$W" >"$W/bin/pw-play"; chmod +x "$W/bin/pw-play"
 qs -p "$FS" >"$W/friday.log" 2>&1 &
 QS=$!
 sleep "${SHELL_WAIT:-12}"
@@ -93,6 +96,22 @@ for d in friday control calendar launcher session; do
   fi
 done
 timeout 10 qs -p "$FS" ipc call shell close >/dev/null 2>&1 || true
+sleep 0.5
+snd=$(cat "$W/pwplay.log" 2>/dev/null || true)
+if [[ "$snd" == *open.oga* && "$snd" == *close.oga* && $(grep -c open.oga <<<"$snd") == 1 ]]; then
+  pass "neon sounds: a drawer opening and closing (one each, none going drawer to drawer)"
+else fail "neon sounds: drawer sounds were: ${snd:-none}"; fi
+if [[ "$snd" == *notify.oga* ]]; then fail "neon sounds: FRIDAY's own notification played a sound"
+else pass "neon sounds: FRIDAY's own notification is quiet"; fi
+# Only when FRIDAY Shell is the notification server here (not another daemon
+# on a desktop's own session bus).
+owner=$(timeout 5 gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+  --method org.freedesktop.DBus.GetConnectionUnixProcessID org.freedesktop.Notifications 2>/dev/null | sed -n 's/.*uint32 \([0-9]*\).*/\1/p' || true)
+if [[ -n "$owner" && "$owner" == "$QS" ]] && timeout 5 notify-send -a Firefox "Download done" "file.zip" 2>/dev/null; then
+  sleep 1
+  if grep -q notify.oga "$W/pwplay.log" 2>/dev/null; then pass "neon sounds: another app's notification plays one"
+  else fail "neon sounds: no sound for another app's notification (played: $(tr '\n' ' ' <"$W/pwplay.log" 2>/dev/null))"; fi
+else skip "neon sounds for notifications (another notification server owns the bus here)"; fi
 # The answer pill, handed an answer the way `friday ask` does.
 answer=$'Your disk is mostly **photos** (41 GB) and the package cache (12 GB).\n\n- `~/Pictures`: 41 GB\n- `/var/cache/pacman`: 12 GB\n\nClear the cache with `sudo paccache -r`.'
 if timeout 10 qs -p "$FS" ipc call answer present true "What's using my disk?" "$answer" "via OpenCode Zen · 1.4 s" "" "opencode/big-pickle" >/dev/null 2>&1; then

@@ -138,6 +138,8 @@ package() {
   install -Dm755 "$lin/hypr/lock-info" -t "$pkgdir/usr/share/friday/hypr"
   install -Dm644 "$lin/hypr/hyprlock.conf" -t "$pkgdir/usr/share/friday/hypr"
   install -Dm644 "$lin/niri/friday.kdl" -t "$pkgdir/usr/share/friday/niri"
+  # The Neon sound set (friday sounds neon), made by sounds/make-neon.py.
+  install -Dm644 "$lin/sounds/neon/"*.oga -t "$pkgdir/usr/share/friday/sounds/neon"
   # App bundles for `friday bundles` (the first-login tour offers them).
   install -Dm644 "$lin"/bundles/* -t "$pkgdir/usr/share/friday/bundles"
   # External tools FRIDAY can add, each a pinned version and checksum (friday obscura).
