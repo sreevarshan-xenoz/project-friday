@@ -3027,6 +3027,12 @@ if [[ "$(jq -c '[.barCorners, .barBackground, .style]' "$conf")" == '[false,fals
 else fail "shell.json after corners/background off: $(cat "$conf" 2>/dev/null)"; fi
 contains "background status" "$("${sh_env[@]}" bash "$F" shell background)" "Bar background: off (friday shell background on)"
 "${sh_env[@]}" bash "$F" shell corners on >/dev/null; "${sh_env[@]}" bash "$F" shell background on >/dev/null
+contains "a preset sets a style and palette together" "$("${sh_env[@]}" bash "$F" shell preset nocturne)" "island style with nocturne colours"
+if [[ "$(jq -c '[.style, .palette]' "$conf")" == '["island","nocturne"]' ]]; then pass "the preset is saved as the style and palette"
+else fail "shell.json after preset nocturne: $(cat "$conf" 2>/dev/null)"; fi
+contains "presets list, marking the current one" "$("${sh_env[@]}" bash "$F" shell preset)" "* nocturne"
+refuse "an unknown preset is refused" "${sh_env[@]}" bash "$F" shell preset nosuchpreset
+"${sh_env[@]}" bash "$F" shell style island >/dev/null; "${sh_env[@]}" bash "$F" shell palette dawn >/dev/null
 echo '{ "palette": "friday", "clock24h": false }' >"$conf"
 "${sh_env[@]}" bash "$F" shell style dock >/dev/null
 contains "other settings are kept" "$(cat "$conf")" '"clock24h": false'

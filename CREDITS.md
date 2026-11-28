@@ -23,6 +23,10 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [zDyant/HyprNova](https://github.com/zDyant/HyprNova), [natepayn3/Vitreus](https://github.com/natepayn3/Vitreus) | MIT | the glaze bar style: one floating glass bar with a lit rim (an idea, `bar/Bar.qml`) |
 | [saatvik333/niri-dotfiles](https://github.com/saatvik333/niri-dotfiles), [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) | MIT | the blade bar style: a hairline that follows the workspace, sliders that slide open on hover (an idea, `bar/Bar.qml`, `bar/SlideControl.qml`) |
 | [liixini/skwd-wall](https://github.com/liixini/skwd-wall) | MIT | the wallpaper fade: the old picture fades out over the new (an idea, `desktop/WallpaperFade.qml`) |
+| [fyzugx/DEsk](https://github.com/fyzugx/DEsk) | MIT | the walnut palette: its paper and walnut colours (`common/Theme.qml`) |
+| [caelestia-dots/shell](https://github.com/caelestia-dots/shell) | GPL-3.0 | the rose palette, from its default colour scheme (`common/Theme.qml`) |
+| [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) | MIT | the nocturne palette, from its default "Noctalia" palette (`common/Theme.qml`) |
+| [HyDE-Project/HyDE](https://github.com/HyDE-Project/HyDE), [Catppuccin](https://github.com/catppuccin/catppuccin) | GPL-3.0, MIT | the mauve palette: Catppuccin Mocha, HyDE's default theme (`common/Theme.qml`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 

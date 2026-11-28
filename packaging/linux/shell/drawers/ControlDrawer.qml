@@ -107,7 +107,28 @@ FocusScope {
       }
       // Two rows under their own names: "Ember" is both a bar style and a
       // palette, and the labels keep them apart.
-      Label { text: "Bar style"; font.pixelSize: Theme.fontS; color: Theme.faint }
+      // A style and palette together; either can be changed after.
+      Label { text: "Presets"; font.pixelSize: Theme.fontS; color: Theme.faint }
+      Flow {
+        Layout.fillWidth: true
+        spacing: 6
+        Repeater {
+          model: Config.presets
+          Chip {
+            required property var modelData
+            text: modelData.name.charAt(0).toUpperCase() + modelData.name.slice(1)
+            primary: Config.style === modelData.style && Config.palette === modelData.palette
+            implicitHeight: 28
+            // At once here; the CLI also matches Hyprland's window look.
+            onClicked: {
+              Config.set("style", modelData.style);
+              Config.set("palette", modelData.palette);
+              Quickshell.execDetached(["friday", "shell", "preset", modelData.name]);
+            }
+          }
+        }
+      }
+      Label { Layout.topMargin: 4; text: "Bar style"; font.pixelSize: Theme.fontS; color: Theme.faint }
       Flow {
         Layout.fillWidth: true
         spacing: 6

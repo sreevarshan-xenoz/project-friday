@@ -46,7 +46,16 @@ Singleton {
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
   readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade"]
-  readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "contrast", "classic"]
+  // A style and palette that go together (Look > Presets, friday shell
+  // preset); keep in step with the CLI's list.
+  readonly property var presets: [
+    { name: "core", style: "ember", palette: "core" },
+    { name: "desk", style: "lean", palette: "walnut" },
+    { name: "rose", style: "rail", palette: "rose" },
+    { name: "nocturne", style: "island", palette: "nocturne" },
+    { name: "mauve", style: "ember", palette: "mauve" }
+  ]
+  readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "walnut", "rose", "nocturne", "mauve", "contrast", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
   readonly property string palette: pick("palette", "core") === "friday" ? "ember" : pick("palette", "core") === "omarchy" ? "classic" : pick("palette", "core")
   readonly property bool clock24h: pick("clock24h", true) === true

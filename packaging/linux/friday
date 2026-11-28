@@ -172,7 +172,8 @@ Desktop & System Substrate:
   friday shell corners [on|off]    The curved corners where the bar meets the screen (off: plain)
   friday shell background [on|off] The bar's own background (off: its parts sit on the wallpaper)
   friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone, orbit, statusline, glaze, blade (lists without a name)
-  friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, contrast, classic
+  friday shell preset [name]       A matched style and palette: core, desk, rose, nocturne, mauve (mix them after)
+  friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, walnut, rose, nocturne, mauve, contrast, classic
   friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
   friday lock                      Lock the screen (hyprlock in FRIDAY's colours)
   friday idle                      Dim, lock and turn the screen off when idle (hypridle)
@@ -230,6 +231,10 @@ shell_window_look() {
     frost)   accent=7cc4ff outline=2c3a4d ;;
     moss)    accent=a8d46f outline=323b2d ;;
     dawn)    accent=d9622b outline=d2c7ba ;;
+    walnut)  accent=85592a outline=c4ad86 ;;
+    rose)    accent=ffb0ca outline=514347 ;;
+    nocturne) accent=f7e9a8 outline=3e4166 ;;
+    mauve)   accent=cba6f7 outline=45475a ;;
     contrast) accent=ffd60a outline=ffffff ;;
     classic|omarchy) accent="" outline="" ;;
     *)       palette=core accent=d42d51 outline=343842 ;;
@@ -434,7 +439,7 @@ friday_lock_conf() {
   local bg text subtext accent signal error warn facepam="${FRIDAY_FACE_PAM:-/etc/pam.d/friday-lock-face}"
   out="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hyprlock.conf"
   palette=$(jq -r '.palette // "core"' "$conf" 2>/dev/null || echo core)
-  case "$palette" in friday) palette=ember ;; core|ember|polar|frost|moss|dawn|contrast) ;; *) palette=core ;; esac
+  case "$palette" in friday) palette=ember ;; core|ember|polar|frost|moss|dawn|walnut|rose|nocturne|mauve|contrast) ;; *) palette=core ;; esac
   for k in bg text subtext accent signal error warn; do
     printf -v "$k" '%s' "$(friday_palette_colour "$palette" "$k")"
   done
@@ -7788,11 +7793,31 @@ $offer"
           *) echo "Usage: friday shell $1 [on|off|status]" >&2; exit 2 ;;
         esac
         exit 0 ;;
+      preset)
+        # A style and palette that go together (Look > Presets); either can be
+        # changed on its own afterwards. Keep in step with Config.qml presets.
+        presets="core:ember:core desk:lean:walnut rose:rail:rose nocturne:island:nocturne mauve:ember:mauve"
+        conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
+        if [ -z "${2:-}" ]; then
+          cur="$(jq -r '"\(.style // "ember"):\(.palette // "core")"' "$conf" 2>/dev/null || echo ember:core)"
+          for p in $presets; do
+            if [ "${p#*:}" = "$cur" ]; then echo "* ${p%%:*}"; else echo "  ${p%%:*}"; fi
+          done
+          exit 0
+        fi
+        for p in $presets; do
+          [ "${p%%:*}" = "$2" ] || continue
+          st=${p#*:}; st=${st%%:*}; pa=${p##*:}
+          "$0" shell style "$st" >/dev/null && "$0" shell palette "$pa" >/dev/null || exit 1
+          echo "Preset $2: the $st style with $pa colours."
+          exit 0
+        done
+        echo "friday: no preset \"$2\" (core, desk, rose, nocturne, mauve)" >&2; exit 2 ;;
       style|palette)
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
         key=$1; shift
-        if [ "$key" = style ]; then opts="ember lean island dock rail keystone orbit statusline glaze blade"; else opts="core ember polar frost moss dawn contrast classic"; fi
+        if [ "$key" = style ]; then opts="ember lean island dock rail keystone orbit statusline glaze blade"; else opts="core ember polar frost moss dawn walnut rose nocturne mauve contrast classic"; fi
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
         cur=$(jq -r --arg k "$key" '.[$k] // empty' "$conf" 2>/dev/null || true)
         [ "$cur" = friday ] && cur=ember
@@ -7823,7 +7848,7 @@ $offer"
                exec quickshell -p "$dir" ipc call shell toggle "$1" ;;
       overview) exec quickshell -p "$dir" ipc call overview toggle ;;
       wallpaper) exec quickshell -p "$dir" ipc call wallpaper toggle ;;
-      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|dock [on|off]|shelf [on|off]|autohide|corners|background [on|off]|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
+      *) echo "Usage: friday shell [start|restart|stop|close|friday|control|calendar|launcher|session|overview|wallpaper|dock [on|off]|shelf [on|off]|autohide|corners|background [on|off]|preset [name]|style [name]|palette [name]|ipc <target> <fn> [args]]" >&2; exit 1 ;;
     esac
     ;;
   daemon)
