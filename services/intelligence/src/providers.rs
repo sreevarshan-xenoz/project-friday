@@ -20,7 +20,7 @@ use crate::secrets::SecretsVault;
 /// [`crate::secrets::SecretsVault::seed_from_env`] to register production
 /// keys into the vault (so the egress gate can scan for them and nothing
 /// auto-prints them). Mirrors the provider-qual environment matrix.
-pub const PROVIDER_ENV_VARS: [(&str, &str); 15] = [
+pub const PROVIDER_ENV_VARS: [(&str, &str); 16] = [
     ("OMNIROUTE_API_KEY", "omniroute"),
     ("OPENROUTER_API_KEY", "openrouter"),
     ("GROQ_API_KEY", "groq"),
@@ -36,6 +36,7 @@ pub const PROVIDER_ENV_VARS: [(&str, &str); 15] = [
     ("ZHIPU_API_KEY", "zhipu"),
     ("RUNCRATE_API_KEY", "runcrate"),
     ("AXFORGE_API_KEY", "axforge"),
+    ("FREEINFERENCE_API_KEY", "freeinference"),
 ];
 
 tokio::task_local! {
@@ -96,13 +97,14 @@ fn public_tier_gate_open() -> bool {
 }
 
 /// The public free tiers a person may turn on (`friday free-tiers`).
-pub const PUBLIC_TIER_PROVIDERS: [&str; 6] = [
+pub const PUBLIC_TIER_PROVIDERS: [&str; 7] = [
     "openrouter",
     "groq",
     "cerebras",
     "gemini",
     "nvidia-nim",
     "apisfreellm",
+    "freeinference",
 ];
 
 /// apisfreellm.com's keyless, OpenAI-compatible endpoint: no account, no
@@ -135,6 +137,51 @@ fn register_listed_keyless(fabric: &mut InferenceFabric) {
         max_context: 32_000,
         tier: None,
     });
+}
+
+/// FreeInference (Harvard SEAS's MadSys lab): a free, OpenAI-compatible
+/// research service with the person's own key. It logs every prompt and
+/// answer for research and may publish anonymised data from them, so it is
+/// only ever a public tier: registered when listed (`friday free-tiers on
+/// freeinference`), the key is set and the `free-tiers` switch is on.
+pub const FREEINFERENCE_BASE_URL: &str = "https://freeinference.org/v1";
+
+/// Register FreeInference's free chat models when it is listed as a public
+/// tier and its key is set.
+fn register_listed_freeinference(fabric: &mut InferenceFabric) {
+    if !fabric.public.contains("freeinference")
+        || fabric.public_off.contains("freeinference")
+        || !feature_on("free-tiers")
+    {
+        return;
+    }
+    let Ok(key) = std::env::var("FREEINFERENCE_API_KEY") else {
+        return;
+    };
+    if key.trim().is_empty() {
+        return;
+    }
+    fabric.register_provider(Box::new(OpenAiProvider {
+        name: "freeinference".to_string(),
+        base_url: FREEINFERENCE_BASE_URL.to_string(),
+        api_key: key.trim().to_string(),
+    }));
+    for (id, ctx) in [
+        ("deepseek-v4-flash", 1_000_000),
+        ("glm-5.3-flash", 1_000_000),
+        ("qwen3.6-35b", 262_000),
+    ] {
+        fabric.register_model(ModelInfo {
+            id: id.to_string(),
+            family: format!("freeinference-{id}"),
+            provider: "freeinference".to_string(),
+            latency_ms: 3_000,
+            reliability: 0.75,
+            capabilities: vec![],
+            max_context: ctx,
+            tier: None,
+        });
+    }
 }
 
 /// The public free tiers the person listed, from `public-providers` in
@@ -2782,6 +2829,7 @@ impl InferenceFabric {
 
         // A keyless public tier the person listed (LAI-6).
         register_listed_keyless(&mut fabric);
+        register_listed_freeinference(&mut fabric);
 
         // GitHub Copilot account-auth provider — the subscription seam. Opt-in
         // ONLY (`COPILOT_CLI_ENABLED=true|1`): `copilot`/`gh` are commonly on CI
@@ -3340,6 +3388,7 @@ fn is_free_provider(name: &str) -> bool {
             | "axforge"
             | "ovh"
             | "apisfreellm"
+            | "freeinference"
     )
 }
 
@@ -5971,6 +6020,44 @@ mod tests {
         assert!(!public_tier_shut(false, true, false, false)); // guard off: every ask
         assert!(public_tier_shut(false, false, false, true)); // free-tiers off
         assert!(public_tier_shut(true, true, false, true)); // this tier turned off
+    }
+
+    /// FreeInference is registered only when listed, on and given a key, and
+    /// never counts as the person's own model.
+    #[test]
+    fn freeinference_is_registered_only_when_listed_with_a_key() {
+        let _guard = EnvVarGuard("FREEINFERENCE_API_KEY");
+        std::env::remove_var("FREEINFERENCE_API_KEY");
+        let mut fabric = InferenceFabric::new();
+        fabric.public.insert("freeinference".to_string());
+        register_listed_freeinference(&mut fabric);
+        assert!(!fabric.providers.contains_key("freeinference"), "no key");
+        std::env::set_var("FREEINFERENCE_API_KEY", "hyi-example");
+        fabric.public_off.insert("freeinference".to_string());
+        register_listed_freeinference(&mut fabric);
+        assert!(
+            !fabric.providers.contains_key("freeinference"),
+            "turned off"
+        );
+        fabric.public_off.clear();
+        register_listed_freeinference(&mut fabric);
+        assert!(fabric.providers.contains_key("freeinference"));
+        assert!(fabric
+            .models
+            .iter()
+            .any(|m| m.provider == "freeinference" && m.id == "glm-5.3-flash"));
+        assert!(!fabric.automatic.contains("freeinference"));
+        assert!(is_free_provider("freeinference"));
+        assert!(
+            fabric.user_providers().is_empty(),
+            "a public tier is not the user's own"
+        );
+        let mut unlisted = InferenceFabric::new();
+        register_listed_freeinference(&mut unlisted);
+        assert!(
+            !unlisted.providers.contains_key("freeinference"),
+            "not listed"
+        );
     }
 
     /// apisfreellm.com is registered only when turned on, never on its own,

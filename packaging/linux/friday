@@ -813,6 +813,7 @@ friday_doctor() {
     NVIDIA_NIM_API_KEY) api_host=integrate.api.nvidia.com ;;
     RUNCRATE_API_KEY)   api_host=api.runcrate.ai ;;
     AXFORGE_API_KEY)    api_host=api.axforge.ai ;;
+    FREEINFERENCE_API_KEY) api_host=freeinference.org ;;
     *)                  api_host=opencode.ai ;;
   esac
   if curl -sS -o /dev/null --max-time 6 "https://$api_host/" 2>/dev/null; then
@@ -1144,7 +1145,11 @@ friday_setup_ai() {
     axforge)    var=AXFORGE_API_KEY;    vision=true
                 echo "AxForge: create an account and a key at https://console.axforge.ai/keys (no card)."
                 echo "3M tokens are free every 30 days; it keeps nothing after answering." ;;
-    *) echo "unknown provider '$provider' (opencode, gemini, groq, nvidia-nim, openrouter, cerebras, runcrate, axforge)" >&2; return 1 ;;
+    freeinference) var=FREEINFERENCE_API_KEY
+                echo "FreeInference (Harvard SEAS's MadSys lab): sign up with an email at https://freeinference.org"
+                echo "(no card) and create a key (it starts with hyi-). It logs every prompt for research, so FRIDAY"
+                echo "uses it only as a public free tier: friday free-tiers on freeinference" ;;
+    *) echo "unknown provider '$provider' (opencode, gemini, groq, nvidia-nim, openrouter, cerebras, runcrate, axforge, freeinference)" >&2; return 1 ;;
   esac
   if [ -t 0 ]; then
     local hint="paste your key"
@@ -5249,7 +5254,7 @@ friday_feature() {
 friday_free_tiers() {
   local file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/public-providers"
   local env_file="${XDG_CONFIG_HOME:-$HOME/.config}/friday/friday.env"
-  local ids="openrouter groq cerebras gemini nvidia-nim apisfreellm" sub="${1:-list}" id="${2:-}" var state
+  local ids="openrouter groq cerebras gemini nvidia-nim apisfreellm freeinference" sub="${1:-list}" id="${2:-}" var state
   case "$sub" in
     list)
       echo "Public free models:"
@@ -5279,6 +5284,7 @@ friday_free_tiers() {
     fi
     printf '\e[31m%s may keep or train on what is sent to it: treat it as public.\e[0m\n' "$id"
     [ "$id" != apisfreellm ] || printf '\e[31m%s\e[0m\n' "apisfreellm.com needs no key and names no operator and no terms; it records each request's IP address and reads every prompt. Never send it anything private."
+    [ "$id" != freeinference ] || printf '\e[31m%s\e[0m\n' "FreeInference logs every prompt and answer for research and may publish anonymised data from them. Never send it anything private."
     if friday_feature_on free-tiers-everywhere; then
       echo "It answers every ask, the screen and selections too. To keep it to plain typed questions: friday feature free-tiers-everywhere off"
     else

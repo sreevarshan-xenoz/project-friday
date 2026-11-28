@@ -46,6 +46,7 @@ pub fn display_name(id: &str) -> String {
         "kilo" => "Kilo",
         "ovh" => "OVHcloud",
         "apisfreellm" => "apisfreellm.com",
+        "freeinference" => "FreeInference",
         "llamacpp" | "ollama" => "Local model",
         "gemini" => "Google Gemini",
         "groq" => "Groq",

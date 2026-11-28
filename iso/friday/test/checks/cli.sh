@@ -629,7 +629,13 @@ bash "$F" feature free-tiers-everywhere on >/dev/null
 out=$(bash "$F" free-tiers on apisfreellm --yes 2>&1)
 contains "apisfreellm needs no key and says it records IPs and prompts" "$out" "records each request's IP address"
 contains "and is listed on" "$(bash "$F" free-tiers list)" "apisfreellm on"
-rm -f "$HOME/.config/friday/public-providers"; sed -i '/^GROQ_API_KEY=placeholder-key$/d' "$HOME/.config/friday/friday.env"
+out=$(bash "$F" free-tiers on freeinference --yes 2>&1 || true)
+contains "freeinference wants its key first" "$out" "setup-ai --keep-others freeinference"
+echo "FREEINFERENCE_API_KEY=hyi-placeholder" >>"$HOME/.config/friday/friday.env"
+out=$(bash "$F" free-tiers on freeinference --yes 2>&1)
+contains "with a key it warns that it logs every prompt" "$out" "logs every prompt and answer for research"
+contains "and is listed on" "$(bash "$F" free-tiers list)" "freeinference on"
+rm -f "$HOME/.config/friday/public-providers"; sed -i '/^GROQ_API_KEY=placeholder-key$/d; /^FREEINFERENCE_API_KEY=hyi-placeholder$/d' "$HOME/.config/friday/friday.env"
 rm -f "$S/qalc"
 shapes=$(bash -c 'source <(sed -n "/^friday_calc_expr() {/,/^}/p" "$1"); shift; for q in "$@"; do friday_calc_expr "$q" >/dev/null && printf "Y" || printf "."; done' _ "$F" \
   "2026-11-22" "123-456-7890" "192.0.2.1/24" "1.0.0-1" "24/7" "50/50" "--5 + 2" "10 - 3" "-40 c to f")
