@@ -176,8 +176,8 @@ check() { # check <description> <remote command>: pass when the command exits 0
 echo "installed system"
 check "computer is named friday" '[ "$(cat /etc/hostname)" = friday ]'
 # Boot shows FRIDAY's splash (and its disk-password prompt), not systemd's text.
-# As root: the boot entry and the initramfs aren't readable by the user.
-if out=$(vm root 'grep -q " quiet splash " /boot/loader/entries/arch.conf && lsinitcpio /boot/initramfs-linux.img | grep -q "themes/omarchy/logo.png"' 2>&1); then
+# Through sudo: the boot entry and the initramfs aren't readable by the user.
+if out=$(vm friday "echo '$PASS_WORD' | sudo -S -p '' sh -c 'grep -q \" quiet splash \" /boot/loader/entries/arch.conf && lsinitcpio /boot/initramfs-linux.img | grep -q themes/omarchy/logo.png'" 2>&1); then
   echo "  ok   boot shows FRIDAY's splash (plymouth and its theme in the initramfs)"
 else echo "  FAIL boot shows no splash: $out"; FAILS=$((FAILS + 1)); fi
 check "home folders are private" '[ "$(stat -c %a ~)" = 700 ] && [ "$(stat -c %a /root)" = 700 ]'
