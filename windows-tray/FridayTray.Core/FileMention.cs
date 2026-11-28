@@ -146,28 +146,17 @@ public static partial class FileMention
         if (!File.Exists(path))
             return (null, "@file needs a text file, a PDF or a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB) I can read.");
 
-        byte[] buffer = new byte[8192];
-        int bytesRead;
-        try
-        {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            bytesRead = fs.Read(buffer, 0, buffer.Length);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return (null, "@file needs a text file, a PDF or a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB) I can read.");
-        }
-
-        for (int i = 0; i < bytesRead; i++)
-        {
-            if (buffer[i] == 0)
-                return (null, "@file needs a text file, a PDF or a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB) I can read.");
-        }
-
         string text;
         try
         {
-            using var reader = new StreamReader(path, Encoding.UTF8, true);
+            // One handle that lets an editor keep the file open for writing.
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            byte[] buffer = new byte[8192];
+            int bytesRead = fs.Read(buffer, 0, buffer.Length);
+            if (Array.IndexOf(buffer, (byte)0, 0, bytesRead) >= 0)
+                return (null, "@file needs a text file, a PDF or a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB) I can read.");
+            fs.Position = 0;
+            using var reader = new StreamReader(fs, Encoding.UTF8, true);
             char[] chars = new char[maxChars];
             int readChars = reader.ReadBlock(chars, 0, chars.Length);
             text = new string(chars, 0, readChars);
