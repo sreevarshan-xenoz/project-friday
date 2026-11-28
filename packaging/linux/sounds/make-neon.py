@@ -1,7 +1,12 @@
 # Minimal UI sounds for FRIDAY's Neon style: short, soft, synthesised here.
 # python3 make-neon.py <dir> writes WAVs; then, for each:
 #   ffmpeg -i x.wav -c:a libvorbis -q:a 4 neon/x.oga
-import numpy as np, wave, sys, os
+import os
+import sys
+import wave
+
+import numpy as np
+
 SR = 48000
 out = sys.argv[1]
 
@@ -11,12 +16,13 @@ def env(n, attack=0.004, decay=6.0):
     return a * np.exp(-decay * t)
 
 def tone(f, dur, decay=8.0, harm=0.15):
-    n = int(SR * dur); t = np.arange(n) / SR
+    n = int(SR * dur)
+    t = np.arange(n) / SR
     s = np.sin(2*np.pi*f*t) + harm*np.sin(2*np.pi*2*f*t) + 0.05*np.sin(2*np.pi*3.01*f*t)
     return s * env(n, decay=decay)
 
 def sweep(f0, f1, dur, decay=10.0):
-    n = int(SR * dur); t = np.arange(n) / SR
+    n = int(SR * dur)
     f = np.geomspace(f0, f1, n)
     ph = 2*np.pi*np.cumsum(f)/SR
     return np.sin(ph) * env(n, decay=decay)
@@ -25,7 +31,8 @@ def noise_sweep(dur, lo=600, hi=5000, up=True):
     n = int(SR * dur)
     x = np.random.default_rng(7).standard_normal(n)
     # crude band-pass moving through the sweep: one-pole filters per block
-    out = np.zeros(n); y1 = y2 = 0.0
+    out = np.zeros(n)
+    y1 = y2 = 0.0
     for i in range(n):
         p = i / n if up else 1 - i / n
         fc = lo * (hi/lo) ** p
@@ -41,15 +48,19 @@ def place(*parts):
     total = max(int(SR*o) + len(p) for o, p in parts)
     s = np.zeros(total)
     for o, p in parts:
-        i = int(SR*o); s[i:i+len(p)] += p
+        i = int(SR*o)
+        s[i:i+len(p)] += p
     return s
 
 def save(name, s, peak_db=-16):
     s = s / (np.max(np.abs(s)) + 1e-9) * 10 ** (peak_db / 20)
-    tail = np.zeros(int(SR*0.02)); s = np.concatenate([s, tail])
+    tail = np.zeros(int(SR*0.02))
+    s = np.concatenate([s, tail])
     path = os.path.join(out, name + ".wav")
     with wave.open(path, "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
         w.writeframes((s * 32767).astype(np.int16).tobytes())
 
 save("notify",   place((0, tone(1318.5, 0.16, 18)), (0.07, tone(1975.5, 0.22, 14))))
