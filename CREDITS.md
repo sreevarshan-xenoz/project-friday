@@ -22,6 +22,7 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [Trendorin/yami](https://github.com/Trendorin/yami) | MIT | the statusline bar style: one slim line of segments along the bottom, like a terminal's (an idea, `bar/StatuslineBar.qml`) |
 | [zDyant/HyprNova](https://github.com/zDyant/HyprNova), [natepayn3/Vitreus](https://github.com/natepayn3/Vitreus) | MIT | the glaze bar style: one floating glass bar with a lit rim (an idea, `bar/Bar.qml`) |
 | [saatvik333/niri-dotfiles](https://github.com/saatvik333/niri-dotfiles), [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) | MIT | the blade bar style: a hairline that follows the workspace, sliders that slide open on hover (an idea, `bar/Bar.qml`, `bar/SlideControl.qml`) |
+| [liixini/skwd-wall](https://github.com/liixini/skwd-wall) | MIT | the wallpaper fade: the old picture fades out over the new (an idea, `desktop/WallpaperFade.qml`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 
