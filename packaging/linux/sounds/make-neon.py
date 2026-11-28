@@ -4,30 +4,34 @@
 import os
 import sys
 import wave
+from typing import Any
 
 import numpy as np
+
+# numpy arrays (numpy has no stubs where mypy runs, so plainly Any).
+Arr = Any
 
 SR = 48000
 out = sys.argv[1]
 
-def env(n, attack=0.004, decay=6.0):
+def env(n: int, attack: float = 0.004, decay: float = 6.0) -> Arr:
     t = np.arange(n) / SR
     a = np.clip(t / attack, 0, 1)
     return a * np.exp(-decay * t)
 
-def tone(f, dur, decay=8.0, harm=0.15):
+def tone(f: float, dur: float, decay: float = 8.0, harm: float = 0.15) -> Arr:
     n = int(SR * dur)
     t = np.arange(n) / SR
     s = np.sin(2*np.pi*f*t) + harm*np.sin(2*np.pi*2*f*t) + 0.05*np.sin(2*np.pi*3.01*f*t)
     return s * env(n, decay=decay)
 
-def sweep(f0, f1, dur, decay=10.0):
+def sweep(f0: float, f1: float, dur: float, decay: float = 10.0) -> Arr:
     n = int(SR * dur)
     f = np.geomspace(f0, f1, n)
     ph = 2*np.pi*np.cumsum(f)/SR
     return np.sin(ph) * env(n, decay=decay)
 
-def noise_sweep(dur, lo=600, hi=5000, up=True):
+def noise_sweep(dur: float, lo: float = 600, hi: float = 5000, up: bool = True) -> Arr:
     n = int(SR * dur)
     x = np.random.default_rng(7).standard_normal(n)
     # crude band-pass moving through the sweep: one-pole filters per block
@@ -44,7 +48,7 @@ def noise_sweep(dur, lo=600, hi=5000, up=True):
     shape = np.sin(np.pi * t / dur) ** 2
     return out * shape * 4
 
-def place(*parts):
+def place(*parts: tuple[float, Arr]) -> Arr:
     total = max(int(SR*o) + len(p) for o, p in parts)
     s = np.zeros(total)
     for o, p in parts:
@@ -52,7 +56,7 @@ def place(*parts):
         s[i:i+len(p)] += p
     return s
 
-def save(name, s, peak_db=-16):
+def save(name: str, s: Arr, peak_db: float = -16) -> None:
     s = s / (np.max(np.abs(s)) + 1e-9) * 10 ** (peak_db / 20)
     tail = np.zeros(int(SR*0.02))
     s = np.concatenate([s, tail])
