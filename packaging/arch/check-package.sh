@@ -65,8 +65,15 @@ grep -q '"ok":true' <<<"$ad" && grep -qE '"version":"1\.([3-9]|[1-9][0-9])\.' <<
   || bad "agent-desktop did not start, or is a version FRIDAY does not accept"
 command -v desktop-file-validate >/dev/null \
   && { desktop-file-validate /usr/share/applications/friday.desktop /usr/share/applications/friday-settings.desktop && ok "launcher entries are valid" || bad "launcher entry invalid"; }
-systemd-analyze verify --user /usr/lib/systemd/user/friday-{linux-daemon,local-ai,recall,wake}.service 2>/dev/null \
-  && ok "user service verifies" || echo "  - systemd-analyze verify unavailable here (no user manager)"
+# Only a missing user manager (a container, CI) is a skip; a unit that
+# doesn't verify is a failure.
+if verify=$(systemd-analyze verify --user /usr/lib/systemd/user/friday-{linux-daemon,local-ai,recall,wake}.service 2>&1); then
+  ok "user services verify"
+elif grep -qiE "bus|XDG_RUNTIME_DIR|user manager|Failed to (connect|initialize|allocate)|No such file or directory.*/run/user" <<<"$verify"; then
+  echo "  - systemd-analyze verify unavailable here (no user manager)"
+else
+  bad "a user service doesn't verify: $(head -n 3 <<<"$verify" | tr '\n' ' ')"
+fi
 
 echo "daemon"
 # The daemon writes its state as it stops: wait for it before removing that.
