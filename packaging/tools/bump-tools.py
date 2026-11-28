@@ -15,6 +15,7 @@ A summary goes to $SUMMARY_FILE as Markdown.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -24,6 +25,10 @@ from typing import Any
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 MANIFEST = os.environ.get("TOOLS_JSON", os.path.join(ROOT, "tools.json"))
+TRAY_PINS = os.environ.get(
+    "TRAY_PINS",
+    os.path.join(ROOT, "..", "..", "windows-tray", "FridayTray.Core", "ObscuraInstaller.cs"),
+)
 summary: list[str] = []
 
 
@@ -121,8 +126,23 @@ def main() -> int:
     if moved:
         with open(MANIFEST, "w") as f:
             f.write(json.dumps(tools, indent=2) + "\n")
+        if "obscura" in moved:
+            tray_pins(tools["obscura"])
         return finish(10 if rc == 0 else rc)
     return finish(rc)
+
+
+def tray_pins(tool: dict[str, Any]) -> None:
+    """The Windows tray installs obscura from the same pin (ObscuraInstaller.cs)."""
+    path = TRAY_PINS
+    if not os.path.exists(path):
+        return
+    text = open(path).read()
+    text = re.sub(r'(Version = ")[^"]*(")', rf"\g<1>{tool['version']}\g<2>", text, count=1)
+    sha = tool["assets"]["windows-x86_64"]["sha256"]
+    text = re.sub(r'(ExpectedSha256 = ")[0-9a-f]*(")', rf"\g<1>{sha}\g<2>", text, count=1)
+    with open(path, "w") as f:
+        f.write(text)
 
 
 def finish(rc: int) -> int:
