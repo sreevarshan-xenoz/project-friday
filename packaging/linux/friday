@@ -7821,7 +7821,7 @@ $offer"
           echo "Preset $2: the $st style with $pa colours."
           exit 0
         done
-        echo "friday: no preset \"$2\" (core, desk, rose, nocturne, mauve)" >&2; exit 2 ;;
+        echo "friday: no preset \"$2\" (core, desk, rose, nocturne, mauve, neon)" >&2; exit 2 ;;
       style|palette)
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
