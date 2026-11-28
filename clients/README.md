@@ -21,7 +21,7 @@ clients and that service is the **Mobile Protocol** (`services/mobile/src/protoc
 | Path | Status | Notes |
 | ---- | ------ | ----- |
 | `android/` | Archived (2026-11-28) | Moved to its own repo, friday-mobile |
-| `desktop/` | planned | Product UI is `frontend/` (Tauri) |
+| `desktop/` | not planned | The desktop UI is FRIDAY Shell (Linux) and the tray (Windows) |
 | `web/` | planned | future (dashboard/tablet companion) |
 | `tablet/` | planned | future |
 

@@ -48,7 +48,7 @@ performs actions via adapters after permission + audit.
   (`scheduler::levels`).
 - Every task has an explicit **lifecycle** (`TaskState`).
 - Recovery at the planner layer is bounded retries + replan; system-level
-  recovery policies live in `friday-recovery` (qualification phase).
+  recovery policies were in `friday-recovery`, archived 2026-11-28.
 
 ## Tests
 
