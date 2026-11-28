@@ -270,8 +270,12 @@ shell_window_look() {
       echo "    blur = { enabled = true, size = 10, passes = 3, vibrancy = 0.2, noise = 0.02 },"
       echo "  },"
       echo "})"
-      echo "-- Frosted glass behind FRIDAY Shell's surfaces (see-through pixels stay clear)."
-      echo "hl.layer_rule({ match = { namespace = \"^friday-.*$\" }, blur = true, ignore_alpha = 0.2 })"
+      # Only the surfaces that are small or up for a moment: a blurred surface
+      # that is always up (the desktop widgets, the corners, the shelf, the
+      # dock) keeps Hyprland and FRIDAY Shell redrawing it several times a
+      # second, measured at 3-4 cores in a VM. Those use a fuller fill instead.
+      echo "-- Frosted glass behind FRIDAY Shell's small and passing surfaces (see-through pixels stay clear)."
+      echo "hl.layer_rule({ match = { namespace = \"^friday-(bar|drawer|notifications|answer|osd|polkit|tour|overview|wallpaper|captions|ring)$\" }, blur = true, ignore_alpha = 0.2 })"
     fi
   } >"${conf%/*}/hypr-look.lua.tmp" && mv -f "${conf%/*}/hypr-look.lua.tmp" "${conf%/*}/hypr-look.lua"
   {
@@ -7732,7 +7736,8 @@ $offer"
         if [ -n "$supervisor" ]; then echo "FRIDAY Shell is already running (pid $supervisor)"; exit 0; fi
         # A window look written before the frosted glass has no blur rule.
         look="${XDG_CONFIG_HOME:-$HOME/.config}/friday/hypr-look.lua"
-        if [ -f "$look" ] && ! grep -q layer_rule "$look"; then shell_window_look; fi
+        # (Or one that blurs every FRIDAY surface, which kept it redrawing.)
+        if [ -f "$look" ] && { ! grep -q layer_rule "$look" || grep -qF '"^friday-.*$"' "$look"; }; then shell_window_look; fi
         shell_supervise "$dir" "$pidfile" ;;
       restart)
         if [ -n "$supervisor" ]; then

@@ -91,7 +91,7 @@ PanelWindow {
       width: row.implicitWidth + 20
       height: 58
       radius: Math.min(18, Theme.radius)
-      color: Theme.glass
+      color: Theme.glassSolid
       border.width: 1
       border.color: Theme.glassEdge
       opacity: dock.reveal

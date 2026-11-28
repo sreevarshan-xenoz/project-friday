@@ -218,8 +218,9 @@ PanelWindow {
         property string label: ""
         property color tint: Theme.accent
         implicitWidth: 92; implicitHeight: 92
-        property real shown: value
-        Behavior on shown { NumberAnimation { duration: Theme.slow; easing.type: Theme.easing } }
+        // Set at once, not eased: each eased step redraws the whole desktop
+        // surface (about 40 frames every 5 s), for a change you barely see.
+        readonly property real shown: value
         Shape {
           anchors.fill: parent
           preferredRendererType: Shape.CurveRenderer
