@@ -2753,7 +2753,9 @@ fn agent_check(args: &[String]) -> std::process::ExitCode {
         Decision::Ask(why) => println!("FRIDAY would leave this to you: it {why}."),
         Decision::Deny(why) => println!("FRIDAY refuses this, whoever approves: {why}."),
     }
-    if let Some(Decision::Ask(_)) = firewall(&step) {
+    if !friday_mobile::features::on("agent-firewall") {
+        println!("The agent firewall is off (friday feature agent-firewall on): an agent running on its own isn't stopped.");
+    } else if let Some(Decision::Ask(_)) = firewall(&step) {
         println!("The agent firewall holds it even when the agent runs on its own (friday feature agent-firewall).");
     }
     std::process::ExitCode::SUCCESS

@@ -22,9 +22,6 @@ use serde_json::{json, Value};
 
 use crate::agent_policy::{self, Decision, Kind};
 
-/// What marks FRIDAY's own hook entry, so it can be found and removed.
-const MARK: &str = "agent-hook claude";
-
 /// Whether FRIDAY answers in the person's own sessions: on unless they
 /// turned it off (`FRIDAY_AGENT_HOOKS=0`).
 pub fn enabled() -> bool {
@@ -392,12 +389,20 @@ fn notify(title: &str, body: &str) {
     }
 }
 
+/// Whether a hook command is FRIDAY's own: it ends with one of the hook's
+/// arguments, so someone's `agent-hook claude-audit` isn't taken for it.
+fn is_our_command(command: &str) -> bool {
+    CLAUDE_EVENTS
+        .iter()
+        .any(|(_, arg)| command.trim_end().ends_with(&format!("agent-hook {arg}")))
+}
+
 fn is_ours(entry: &Value) -> bool {
     entry["hooks"]
         .as_array()
         .into_iter()
         .flatten()
-        .any(|h| h["command"].as_str().is_some_and(|c| c.contains(MARK)))
+        .any(|h| h["command"].as_str().is_some_and(is_our_command))
 }
 
 /// Claude Code's hook events FRIDAY uses, with the hook command's argument:
@@ -467,19 +472,25 @@ pub fn uninstall_claude(settings: &Path) -> Result<bool, String> {
         };
         // Only FRIDAY's own hook goes: an entry that also holds someone
         // else's keeps theirs.
+        // Entries FRIDAY emptied go; the person's own, even an empty one, stay.
+        let before = list.len();
         let mut here = false;
-        for entry in list.iter_mut() {
-            if let Some(hooks) = entry["hooks"].as_array_mut() {
-                let before = hooks.len();
-                hooks.retain(|h| !h["command"].as_str().is_some_and(|c| c.contains(MARK)));
-                here |= hooks.len() != before;
+        list.retain_mut(|entry| {
+            let Some(hooks) = entry["hooks"].as_array_mut() else {
+                return true;
+            };
+            let had = hooks.len();
+            hooks.retain(|h| !h["command"].as_str().is_some_and(is_our_command));
+            if hooks.len() == had {
+                return true;
             }
-        }
-        if !here {
+            here = true;
+            !hooks.is_empty()
+        });
+        if !here && list.len() == before {
             continue;
         }
         changed = true;
-        list.retain(|e| e["hooks"].as_array().is_none_or(|h| !h.is_empty()));
         if list.is_empty() {
             doc["hooks"].as_object_mut().unwrap().remove(event);
         }
@@ -805,6 +816,8 @@ mod tests {
         let settings = d.0.join("settings.json");
         let theirs = json!({"model": "opus", "hooks": {"PermissionRequest": [
             {"matcher": "Bash", "hooks": [{"type": "command", "command": "their-hook"}]}],
+            "PreToolUse": [{"matcher": "Edit", "hooks": []},
+                {"matcher": "*", "hooks": [{"type": "command", "command": "python agent-hook claude-audit"}]}],
             "Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}});
         std::fs::write(&settings, theirs.to_string()).unwrap();
         let ctl = Path::new("/usr/bin/friday-ctl");
@@ -822,12 +835,12 @@ mod tests {
             "\"/usr/bin/friday-ctl\" agent-hook claude"
         );
         assert_eq!(
-            doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            doc["hooks"]["PreToolUse"][2]["hooks"][0]["command"],
             "\"/usr/bin/friday-ctl\" agent-hook claude-pre"
         );
         // An older install with only the permission hook gets the firewall's.
         let mut older = doc.clone();
-        older["hooks"].as_object_mut().unwrap().remove("PreToolUse");
+        older["hooks"]["PreToolUse"].as_array_mut().unwrap().pop();
         std::fs::write(&settings, older.to_string()).unwrap();
         assert!(
             install_claude(&settings, ctl).unwrap(),
