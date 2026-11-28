@@ -3043,6 +3043,9 @@ printf '#!/bin/bash\necho "hyprctl $*" >> %q\n' "$LOG" >"$S/hyprctl"; chmod +x "
 contains "windows follow the style (dock gaps)" "$(cat "$look")" "gaps_out = 16"
 contains "window borders follow the palette (frost accent)" "$(cat "$look")" 'active_border = "rgba(7cc4ffee)"'
 contains "Hyprland reloads to show it" "$(cat "$LOG")" "hyprctl reload"
+contains "the bar gets frosted glass" "$(cat "$look")" 'namespace = "^friday-(bar|'
+if grep -qE 'friday-\.\*|\|desktop|\|corner|\|shelf|\|dock' "$look"; then fail "an always-up surface (desktop, corners, shelf, dock) is blurred: it keeps redrawing"
+else pass "the always-up surfaces aren't blurred (a blurred one keeps redrawing)"; fi
 contains "niri's windows get the look too (dock gaps)" "$(cat "$HOME/.config/friday/niri-look.kdl")" "gaps 16"
 "${sh_env[@]}" bash "$F" shell palette classic >/dev/null
 if grep -q active_border "$look"; then fail "the classic palette still overrides the desktop theme's border colours"

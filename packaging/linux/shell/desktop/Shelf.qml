@@ -130,7 +130,7 @@ PanelWindow {
       visible: shelf.reveal > 0.01
       opacity: shelf.reveal
       radius: Theme.radius
-      color: Theme.glass
+      color: Theme.glassSolid
       border.width: 1
       border.color: drop.containsDrag ? Theme.accent : Theme.glassEdge
 

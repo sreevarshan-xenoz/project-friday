@@ -298,6 +298,9 @@ Singleton {
   // the layer rules in hypr-look.lua). Opaque enough to read without blur.
   readonly property bool light: bg.hslLightness > 0.5
   readonly property color glass: highContrast ? bg : alpha(bg, light ? 0.8 : 0.72)
+  // For surfaces that are always up and so get no blur behind them (the
+  // desktop cards, the dock, the shelf): fuller, so they read without it.
+  readonly property color glassSolid: highContrast ? bg : alpha(bg, light ? 0.93 : 0.9)
   readonly property color glassWell: alpha(text, highContrast ? 0.14 : light ? 0.07 : 0.06)
   readonly property color glassEdge: highContrast ? text : alpha(text, light ? 0.16 : 0.11)
 
