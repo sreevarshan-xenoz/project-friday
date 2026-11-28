@@ -1,7 +1,0 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Pre-Compose theme; Compose supplies its own color scheme at runtime. -->
-    <style name="Theme.Friday" parent="android:Theme.Material.NoActionBar">
-        <item name="android:colorBackground">@color/friday_bg</item>
-        <item name="android:statusBarColor">@color/friday_bg</item>
-    </style>
-</resources>

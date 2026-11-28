@@ -1304,24 +1304,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "friday-benchmark"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "friday-actions",
- "friday-capabilities",
- "friday-planner",
- "friday-recovery",
- "friday-simulation",
- "friday-windows",
- "rand 0.8.7",
- "serde",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "friday-capabilities"
 version = "0.1.0"
 dependencies = [
@@ -1626,14 +1608,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "friday-recovery"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]

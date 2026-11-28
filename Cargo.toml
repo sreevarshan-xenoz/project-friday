@@ -9,8 +9,6 @@ members = [
     "services/engines/memory",
     "services/evaluation",
     "services/simulation",
-    "services/benchmark",
-    "services/recovery",
     "services/context",
     "services/skills",
     "services/investigation",
