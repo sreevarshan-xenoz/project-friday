@@ -73,7 +73,7 @@ Singleton {
   // The shelf on the right edge (off unless turned on).
   readonly property bool shelf: pick("shelf", false) === true
   // The desktop pet: one of FRIDAY's characters, or "off" (switch: desktop-pet).
-  readonly property var pets: ["mote"]
+  readonly property var pets: ["mote", "ferro", "iris", "bolt", "kiri", "nox"]
   readonly property string pet: pets.includes(pick("pet", "mote")) ? pick("pet", "mote") : "off"
   readonly property bool petShown: pet !== "off" && featureOn("desktop-pet")
   // The bar slides away until the pointer reaches its edge (off unless on).

@@ -832,7 +832,15 @@ else
     Monolith*) SHELL_STYLE_ID=monolith ;;
     *)       SHELL_STYLE_ID=ember ;;
   esac
-  case "$SHELL_PET" in No*) SHELL_PET_ID=off ;; *) SHELL_PET_ID=mote ;; esac
+  case "$SHELL_PET" in
+    No*) SHELL_PET_ID=off ;;
+    Ferro*) SHELL_PET_ID=ferro ;;
+    Iris*) SHELL_PET_ID=iris ;;
+    Bolt*) SHELL_PET_ID=bolt ;;
+    Kiri*) SHELL_PET_ID=kiri ;;
+    Nox*) SHELL_PET_ID=nox ;;
+    *) SHELL_PET_ID=mote ;;
+  esac
   jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" --arg pet "$SHELL_PET_ID" \
     '{style: $style, palette: $palette, polkit: true, pet: $pet} + (if $wp == "" then {} else {wallpaper: $wp} end)' \
     >"/mnt$USER_HOME/.config/friday/shell.json"

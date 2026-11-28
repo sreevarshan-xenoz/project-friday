@@ -434,8 +434,13 @@ step_look() {
     echo
     friday_head "Desktop pet"
     friday_note "  A small creature in the corner that shows when FRIDAY is thinking; click it to ask."
-    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=3 --selected="$SHELL_PET" \
+    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=8 --selected="$SHELL_PET" \
       "Mote (a little smoke creature; it thinks while FRIDAY works)" \
+      "Ferro (a cyber fox)" \
+      "Iris (a little drone with a camera eye)" \
+      "Bolt (a robot cat)" \
+      "Kiri (an origami bird)" \
+      "Nox (a moth spirit)" \
       "No pet") && SHELL_PET="$v"
     friday_ok "$SHELL_PET"
   fi

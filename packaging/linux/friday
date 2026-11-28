@@ -168,7 +168,7 @@ Desktop & System Substrate:
   friday shell ipc <target> <fn>   Call FRIDAY Shell IPC (e.g. notifications dismissAll)
   friday shell dock [on|off]       A dock of pinned and running apps along the bottom (up at the edge)
   friday shell shelf [on|off]      A shelf on the right edge: drop files or text to keep, recent copies
-  friday shell pet [name|off]      The desktop pet: mote (it thinks while FRIDAY works; click it to ask)
+  friday shell pet [name|off]      The desktop pet: mote, ferro, iris, bolt, kiri or nox (it thinks while FRIDAY works; click it to ask)
   friday shell autohide [on|off]   The bar slides away until the pointer reaches its edge
   friday shell corners [on|off]    The curved corners where the bar meets the screen (off: plain)
   friday shell background [on|off] The bar's own background (off: its parts sit on the wallpaper)
@@ -7786,7 +7786,7 @@ $offer"
         # The desktop pet (shell.json "pet"): one of FRIDAY's characters, or
         # off. Mote unless picked; the desktop-pet switch turns it off too.
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
-        pets="mote"
+        pets="mote ferro iris bolt kiri nox"
         set -- "$1" "${2:-status}"
         if [ "$2" = status ]; then
           p=$(jq -r '.pet // "mote"' "$conf" 2>/dev/null || echo mote)
