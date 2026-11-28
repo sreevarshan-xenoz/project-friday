@@ -79,6 +79,7 @@ STEPS = [
     (1, ENTER),  # window manager: niri
     (2, DOWN * 2),
     (1, ENTER),  # style: Island (after Lean, the default, and Ember)
+    (2, DOWN * 5 + ENTER),  # desktop pet: Nox (after Mote, the default, and four more)
     (2, ENTER),  # login theme
     (4, "x"),  # features: desktop control off
     (1, DOWN * 3),
@@ -289,6 +290,7 @@ for key, want in (
         ("interactive", "1"),
         ("session", "niri"),
         ("style", "Island"),
+        ("pet", "Nox"),
         ("desktop", "false"),
         ("tasks", "true"),
         ("appname", "true"),
