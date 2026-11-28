@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "friday-mobile"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anydoc 0.2.5",
  "async-trait",

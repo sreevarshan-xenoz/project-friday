@@ -2,6 +2,28 @@
 # "## X.Y.Z" line, then one "- " line per change people will notice. After an
 # update FRIDAY shows the lines since the version you last saw, once
 # (friday whats-new shows them again).
+## 0.11.0
+- A desktop pet in the corner shows when FRIDAY is thinking; click it to ask, or drop a file on it. Mote by default, five more to pick, or none.
+- Eight new bar styles: rail, keystone, orbit, statusline, glaze, blade, taskbar and monolith.
+- The Neon look: a graphite and cyan palette, a square-cut bar, its own sounds and wallpapers.
+- Presets pair a bar style with colours (core, desk, rose, nocturne, mauve, neon); four new palettes.
+- A dock of your apps along the bottom, and a shelf on the right edge for files and text you drop there.
+- The bar can hide until the pointer reaches its edge; its corners and background can be turned off.
+- Small bar tools: snip part of the screen, pick a colour, mute the microphone; CPU and memory at a glance.
+- @file reads Word, PowerPoint, Excel, OpenDocument, RTF and EPUB files too.
+- FRIDAY can read web pages with a small pinned browser (friday obscura install); on Windows from Settings.
+- On Windows, @file <path> in the ask box sends that file's text.
+- The bar's centre is an island that shows the clock, listening, FRIDAY at work and the answer.
+- Desktop widgets: the time, FRIDAY, the computer and what's playing.
+- Super+Tab shows every workspace with live pictures; drag a window to move it. A 4-finger swipe up opens it too.
+- A wallpaper picker on Super+Ctrl+T, with the accent colour taken from the wallpaper; a new wallpaper fades in.
+- Rounded screen corners, and workspaces that can show their apps' icons.
+- friday local-ai fit lists the local models that fit this computer; on battery a smaller one takes over.
+- A mic level shows while FRIDAY listens.
+- "Always allow" for a harmless action, remembered for 30 days.
+- A password or key left on the clipboard is cleared after 2 minutes.
+- The Windows tray has the same five palettes, Core red by default.
+- FRIDAY Shell uses far less CPU at rest.
 ## 0.10.0
 - Setup lets you pick your file manager, terminal, video, picture and PDF apps, code editors and AI coding agents (VS Code, Zed, Claude Code, Codex, OpenCode, agy, Cline, Kilo…), and more apps.
 - Setup asks your git name and email, and can keep an encrypted daily backup in a private GitHub repo (friday backup github).
