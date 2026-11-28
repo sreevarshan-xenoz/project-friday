@@ -1982,6 +1982,9 @@ async fn main() -> std::process::ExitCode {
     if raw.first().map(String::as_str) == Some("agent-hooks") {
         return agent_hooks(&raw[1..]);
     }
+    if raw.first().map(String::as_str) == Some("agent-check") {
+        return agent_check(&raw[1..]);
+    }
     // "What did I miss?": from FRIDAY's own state, nothing sent anywhere.
     if raw.first().map(String::as_str) == Some("brief") {
         if !friday_mobile::features::on("brief") {
@@ -2697,9 +2700,9 @@ async fn wait_for_goal(
 fn agent_hook(args: &[String]) -> std::process::ExitCode {
     use std::io::Read;
     let agent = args.first().map(String::as_str).unwrap_or("");
-    if agent != "claude" && agent != "agy" {
+    if !["claude", "claude-pre", "agy"].contains(&agent) {
         eprintln!(
-            "usage: friday-ctl agent-hook claude|agy   (the agent runs this; it reads stdin)"
+            "usage: friday-ctl agent-hook claude|claude-pre|agy   (the agent runs this; it reads stdin)"
         );
         return std::process::ExitCode::from(2u8);
     }
@@ -2714,6 +2717,11 @@ fn agent_hook(args: &[String]) -> std::process::ExitCode {
                 println!("{answer}");
             }
         }
+        ("claude-pre", Some(r)) if !off => {
+            if let Some(answer) = friday_mobile::agent_hooks::claude_pre_tool(&r, &log_dir) {
+                println!("{answer}");
+            }
+        }
         ("agy", Some(r)) if !off => {
             println!("{}", friday_mobile::agent_hooks::agy_pre_tool(&r, &log_dir));
         }
@@ -2721,6 +2729,32 @@ fn agent_hook(args: &[String]) -> std::process::ExitCode {
         // the person as it would without FRIDAY.
         ("agy", _) => println!("{}", serde_json::json!({"decision": "ask"})),
         _ => {}
+    }
+    std::process::ExitCode::SUCCESS
+}
+
+/// `friday-ctl agent-check <command>`: what FRIDAY would do if a coding agent
+/// asked to run this command in the current folder. Nothing is run.
+fn agent_check(args: &[String]) -> std::process::ExitCode {
+    use friday_mobile::agent_policy::{decide, firewall, Decision, Kind, Step};
+    let cmd = args.join(" ");
+    if cmd.trim().is_empty() {
+        eprintln!("usage: friday agents test \"<command>\"   (nothing is run)");
+        return std::process::ExitCode::from(2u8);
+    }
+    let folder = std::env::current_dir().unwrap_or_default();
+    let step = Step {
+        kind: Kind::Execute,
+        command: Some(cmd),
+        paths: Vec::new(),
+    };
+    match decide(&step, &folder) {
+        Decision::Allow => println!("FRIDAY would approve this in {}.", folder.display()),
+        Decision::Ask(why) => println!("FRIDAY would leave this to you: it {why}."),
+        Decision::Deny(why) => println!("FRIDAY refuses this, whoever approves: {why}."),
+    }
+    if let Some(Decision::Ask(_)) = firewall(&step) {
+        println!("The agent firewall holds it even when the agent runs on its own (friday feature agent-firewall).");
     }
     std::process::ExitCode::SUCCESS
 }

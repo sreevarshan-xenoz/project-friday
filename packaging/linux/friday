@@ -97,7 +97,7 @@ Autonomous Agent & Cognitive Loop:
   friday panic [on|off|status]     Stop agents, voice, capture and routines at once, until off (Super+Ctrl+Shift+Escape)
   friday tasks [pause|resume|delete <id>|recipes|recipe <name>|status|on|off]
                                    Standing tasks ("every morning ..."): list, pause, delete, turn all off
-  friday agents [show|allow|deny|reply|accept|discard|compare <id>|hooks|check|worktree|sandbox [on|off]|status|on|off]
+  friday agents [show|allow|deny|reply|accept|discard|compare <id>|hooks|test "<cmd>"|check|worktree|sandbox [on|off]|status|on|off]
                                    Coding agents FRIDAY runs for you (opencode, agy, Claude Code, Codex): follow, answer, turn off
   friday ask --json [--web] [--new] <question>  The answer as one JSON object, for scripts
   friday brief [--say]             What you missed: agents, standing tasks, today's reminders (local only)
@@ -4864,6 +4864,11 @@ friday_agents() {
       # Your own Claude Code sessions: FRIDAY approves the routine steps there too.
       friday-ctl agent-hooks "${id:-status}"
       ;;
+    test)
+      # What FRIDAY would do with a command an agent wants to run here; nothing runs.
+      [ -n "$id" ] || { echo "usage: friday agents test \"<command>\"   (nothing is run)" >&2; return 2; }
+      friday-ctl agent-check "${@:2}"
+      ;;
     reply)
       local text="${*:3}"
       [[ "$id" =~ ^r[0-9a-f]+$ ]] && [ -f "$d/$id.json" ] && [ -n "$text" ] \
@@ -4923,7 +4928,7 @@ friday_agents() {
         "FRIDAY can run opencode, agy, Claude Code or Codex for you and answer their routine approvals; risky steps wait for you" \
         "FRIDAY won't start coding agents" "$cmd" ;;
     *)
-      echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|reply <id> \"text\"|hooks [on|off]|status|on|off]" >&2
+      echo "usage: friday agents [list|show <id>|allow <id>|deny <id>|reply <id> \"text\"|hooks [on|off]|test \"<command>\"|status|on|off]" >&2
       return 2
       ;;
   esac
@@ -5234,7 +5239,8 @@ mic-level|While FRIDAY listens, a thin bar in the answer card moves with your vo
 battery-model|On battery, a local model you picked for asks or chores gives way to a smaller one of its family you already have
 workspace-overview|Super+Tab shows every workspace with its windows; drag a window onto another to move it
 wallpaper-accent|A new wallpaper brings its own accent colour to FRIDAY Shell and the window borders (the background stays dark)
-screen-corners|The screen's corners are rounded, so the desktop and full-screen windows meet the edge in a curve"
+screen-corners|The screen's corners are rounded, so the desktop and full-screen windows meet the edge in a curve
+agent-firewall|A coding agent running on its own still stops for you before sudo, a script from the internet, your keys or login files"
 friday_features_file() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/friday/features-off"; }
 # friday_feature_on <name>: on unless switched off.
 friday_feature_on() { ! grep -qxF -- "$1" "$(friday_features_file)" 2>/dev/null; }
