@@ -5150,7 +5150,6 @@ clipboard-expiry|A clipboard copied over 10 minutes ago is not used as context (
 ask-timings|How long each stage of an ask takes is kept on this computer (friday doctor shows the median and slow end)
 spoken-length|Spoken answers say two, six or all sentences (friday voice speak length brief, normal or detailed); the card shows all
 dictation-history|The last 20 voice-typed texts stay on this computer, to get one back (friday dictations)
-tree-trim|A window's text leaves out what isn't on screen, collapsed menus' items, repeats and lone icons, so asks are smaller
 tree-trim|A window's text leaves out what the app marks hidden, collapsed menus' items, repeated controls and icon glyphs, so asks are smaller
 point-ask|friday ask --point: click one control and ask about it; only it, what it sits in and its neighbours go, as text
 retention|Finished agent runs, the agent hooks log and wrong-answer reports go after 30 days (friday-ctl retention shows every rule)
