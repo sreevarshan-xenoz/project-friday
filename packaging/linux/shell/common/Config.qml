@@ -15,7 +15,8 @@ import Quickshell.Io
 //                               // pills), "dock" (a floating bar at the bottom)
 //                               // "rail" (a slim column down the left edge)
 //                               // "keystone" (one notch in the top's middle), "orbit" (two pills, middle clear)
-//                               // or "neon" (slim, square-cut, a hairline edge)
+//                               // "neon" (slim, square-cut, a hairline edge)
+//                               // or "monolith" (a solid square slab, "//" between parts)
 //     "palette": "core",        // FRIDAY's own: "core" (the logo's obsidian
 //                               // and red), "ember", "polar", "frost", "moss",
 //                               // "dawn" (light), "neon" (graphite, muted
@@ -47,7 +48,7 @@ Singleton {
   property var featuresOff: []
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
-  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade", "taskbar", "neon"]
+  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade", "taskbar", "neon", "monolith"]
   // A style and palette that go together (Look > Presets, friday shell
   // preset); keep in step with the CLI's list.
   readonly property var presets: [

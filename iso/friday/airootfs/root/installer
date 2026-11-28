@@ -828,6 +828,7 @@ else
     Blade*) SHELL_STYLE_ID=blade ;;
     Taskbar*) SHELL_STYLE_ID=taskbar ;;
     Neon*) SHELL_STYLE_ID=neon ;;
+    Monolith*) SHELL_STYLE_ID=monolith ;;
     *)       SHELL_STYLE_ID=ember ;;
   esac
   jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" \

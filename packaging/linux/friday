@@ -171,7 +171,7 @@ Desktop & System Substrate:
   friday shell autohide [on|off]   The bar slides away until the pointer reaches its edge
   friday shell corners [on|off]    The curved corners where the bar meets the screen (off: plain)
   friday shell background [on|off] The bar's own background (off: its parts sit on the wallpaper)
-  friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone, orbit, statusline, glaze, blade, taskbar, neon (lists without a name)
+  friday shell style [name]        Shell style: ember, lean, island, dock, rail, keystone, orbit, statusline, glaze, blade, taskbar, neon, monolith (lists without a name)
   friday shell preset [name]       A matched style and palette: core, desk, rose, nocturne, mauve (mix them after)
   friday shell palette [name]      Shell colours: core, ember, polar, frost, moss, dawn, walnut, rose, nocturne, mauve, neon, contrast, classic
   friday wallpaper [list|next|show|off|<image>]  The desktop wallpaper (FRIDAY OS; swaybg draws it)
@@ -224,6 +224,7 @@ shell_window_look() {
     blade)  gi=5 go=10 bs=1 r=8 ;;
     taskbar) gi=5 go=10 bs=1 r=8 ;;
     neon)   gi=4 go=8 bs=1 r=2 ;;
+    monolith) gi=4 go=8 bs=1 r=0 ;;
     *)      style=ember gi=5 go=10 bs=2 r=10 ;;
   esac
   case "$palette" in
@@ -7825,7 +7826,7 @@ $offer"
         # The look, as the control drawer's Look picker sets it: merged into
         # shell.json, which the shell applies live.
         key=$1; shift
-        if [ "$key" = style ]; then opts="ember lean island dock rail keystone orbit statusline glaze blade taskbar neon"; else opts="core ember polar frost moss dawn walnut rose nocturne mauve neon contrast classic"; fi
+        if [ "$key" = style ]; then opts="ember lean island dock rail keystone orbit statusline glaze blade taskbar neon monolith"; else opts="core ember polar frost moss dawn walnut rose nocturne mauve neon contrast classic"; fi
         conf="${XDG_CONFIG_HOME:-$HOME/.config}/friday/shell.json"
         cur=$(jq -r --arg k "$key" '.[$k] // empty' "$conf" 2>/dev/null || true)
         [ "$cur" = friday ] && cur=ember

@@ -415,7 +415,7 @@ step_look() {
     echo
     friday_head "Style"
     friday_note "  Where the bar sits and its shape; windows' gaps and corners follow it."
-    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=13 --selected="$SHELL_STYLE" \
+    v=$(gum choose --cursor="$FRIDAY_CURSOR" --height=14 --selected="$SHELL_STYLE" \
       "Lean (thin borders, small gaps, no blur; the FRIDAY OS look)" \
       "Ember (bar flush with the top edge)" \
       "Island (floating pills along the top)" \
@@ -427,7 +427,8 @@ step_look() {
       "Glaze (one floating glass bar along the top, a lit rim)" \
       "Blade (flush, a hairline that follows the workspace; sliders on hover)" \
       "Taskbar (along the bottom, the way Windows lays it out)" \
-      "Neon (slim and square-cut, a hairline of accent under it)") && SHELL_STYLE="$v"
+      "Neon (slim and square-cut, a hairline of accent under it)" \
+      "Monolith (one solid square slab along the top, like a HUD)") && SHELL_STYLE="$v"
     friday_ok "$SHELL_STYLE"
   fi
   echo
