@@ -42,13 +42,14 @@ public sealed record AskOutcome(
 public static partial class Asking
 {
     public const int MaxContextChars = 4000;
+    public const int MaxFileContextChars = 8000;
 
-    /// <summary>The goal text sent to FRIDAY: the question, plus selected text as context.</summary>
-    public static string BuildRequest(string question, string? context)
+    /// <summary>The goal text sent to FRIDAY: the question, plus selected or file text as context.</summary>
+    public static string BuildRequest(string question, string? context, int maxContextChars = MaxContextChars)
     {
         if (string.IsNullOrWhiteSpace(context))
             return question;
-        var ctx = context.Length > MaxContextChars ? context[..MaxContextChars] : context;
+        var ctx = context.Length > maxContextChars ? context[..maxContextChars] : context;
         return $"{question}\n\nUse this text as context:\n\"\"\"\n{ctx}\n\"\"\"";
     }
 

@@ -155,6 +155,7 @@ public static class AppSettings
     public const string FeaturesOff = "FRIDAY_FEATURES_OFF";
     public static readonly (string Name, string What)[] Features =
     [
+        ("mentions", "@file <path> in a question sends that file's text with it (a document, a PDF or a text file)"),
         ("screen-secret-check", "No screenshot leaves when the window shows a key or password (its text is checked here first)"),
         ("update-check", "Tell me when a newer FRIDAY is out (asks GitHub once a minute after sign-in)"),
         ("update-rollback", "Go back to the version I had when an update doesn't start properly"),

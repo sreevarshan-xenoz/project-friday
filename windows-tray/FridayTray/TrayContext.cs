@@ -469,9 +469,39 @@ internal sealed class TrayContext : ApplicationContext
                 }
             }
 
+            // @file mentions in question
+            var isFileMention = false;
+            if (AppSettings.FeatureOn(env, "mentions"))
+            {
+                var (cleanedQuestion, mentionPath, mentionError) = FileMention.Parse(question);
+                if (mentionError != null)
+                {
+                    Notify("FRIDAY", mentionError, ToolTipIcon.Warning);
+                    return;
+                }
+                if (mentionPath != null)
+                {
+                    if (kind != AskKind.Plain || context != null)
+                    {
+                        Notify("FRIDAY", "@clip and @file go on their own: not together, and not with the screen, a selection or a follow-up.", ToolTipIcon.Warning);
+                        return;
+                    }
+                    var (fileContext, readError) = await ReadFileMentionAsync(mentionPath);
+                    if (readError != null)
+                    {
+                        Notify("FRIDAY", readError, ToolTipIcon.Warning);
+                        return;
+                    }
+                    context = fileContext;
+                    question = cleanedQuestion;
+                    isFileMention = true;
+                }
+            }
+
             // "search ..." and "look up ..." ask for a web search, and only they do.
             var (asked, web) = Asking.WebQuestion(question);
-            var request = SourceApp.Append(Asking.BuildRequest(asked, context), appLine);
+            var maxContext = isFileMention ? FileMention.MaxContextChars : Asking.MaxContextChars;
+            var request = SourceApp.Append(Asking.BuildRequest(asked, context, maxContext), appLine);
             // "Close this window": the one in front at the keypress, never
             // one switched to while FRIDAY thinks (not a private one).
             // Only with no quoted context after it (as on Linux).
@@ -497,6 +527,38 @@ internal sealed class TrayContext : ApplicationContext
         {
             _asking = false;
         }
+    }
+
+    private async Task<(string? Text, string? Error)> ReadFileMentionAsync(string mentionPath)
+    {
+        var resolved = FileMention.ExpandTilde(mentionPath);
+        try
+        {
+            resolved = Path.GetFullPath(resolved);
+        }
+        catch (Exception)
+        {
+            return (null, "@file needs a text file, a PDF or a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB) I can read.");
+        }
+
+        if (FileMention.IsPicture(resolved))
+            return (null, "I can't read a picture from a file yet: open it, then ask about the screen.");
+
+        if (FileMention.IsKeyOrPasswordFile(resolved))
+            return (null, "That file holds keys or passwords, so it isn't sent.");
+
+        if (!File.Exists(resolved))
+            return (null, "@file needs a text file, a PDF or a document (Word, PowerPoint, Excel, OpenDocument, RTF, EPUB) I can read.");
+
+        if (FileMention.IsDocument(resolved))
+        {
+            var res = await Ctl.RunAsync(_install, ["doc-text", resolved, "8000"], TimeSpan.FromSeconds(20));
+            if (!res.Ok)
+                return (null, "That file has no text I can read (a scanned PDF has only pictures; a document may be damaged or locked).");
+            return FileMention.ValidateDocumentText(res.Output, FileMention.MaxContextChars);
+        }
+
+        return FileMention.ReadTextFile(resolved, FileMention.MaxContextChars);
     }
 
     /// <summary>
