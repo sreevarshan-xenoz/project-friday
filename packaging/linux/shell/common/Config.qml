@@ -56,7 +56,8 @@ Singleton {
     { name: "desk", style: "lean", palette: "walnut" },
     { name: "rose", style: "rail", palette: "rose" },
     { name: "nocturne", style: "island", palette: "nocturne" },
-    { name: "mauve", style: "ember", palette: "mauve" }
+    { name: "mauve", style: "ember", palette: "mauve" },
+    { name: "neon", style: "neon", palette: "neon" }
   ]
   readonly property var palettes: ["core", "ember", "polar", "frost", "moss", "dawn", "walnut", "rose", "nocturne", "mauve", "neon", "contrast", "classic"]
   readonly property string style: styles.includes(pick("style", "ember")) ? pick("style", "ember") : "ember"
