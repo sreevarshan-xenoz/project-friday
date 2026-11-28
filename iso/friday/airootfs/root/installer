@@ -833,7 +833,7 @@ else
     *)       SHELL_STYLE_ID=ember ;;
   esac
   case "$SHELL_PET" in
-    No*) SHELL_PET_ID=off ;;
+    "No pet"*) SHELL_PET_ID=off ;;
     Ferro*) SHELL_PET_ID=ferro ;;
     Iris*) SHELL_PET_ID=iris ;;
     Bolt*) SHELL_PET_ID=bolt ;;
