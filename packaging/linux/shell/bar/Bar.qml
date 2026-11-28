@@ -16,6 +16,7 @@ import qs.services
 //   keystone  one notch hanging from the middle of the top edge, the groups
 //           pulled in around FRIDAY's island (the rest of the edge is free)
 //   neon    slim and square-cut along the top, a hairline of accent under it
+//   monolith  one solid square slab along the top, "//" between its parts
 PanelWindow {
   id: bar
 
@@ -30,6 +31,8 @@ PanelWindow {
   // Blade: flush, a hairline under it that follows the active workspace in
   // FRIDAY's colour, and volume and brightness that slide open on hover.
   readonly property bool blade: Theme.style === "blade"
+  // Monolith: a solid slab (no glass), "//" between its parts.
+  readonly property bool monolith: Theme.monolith
 
   // Auto-hide (Look > Auto-hide bar; shell.json "barAutoHide"; off unless
   // turned on): the bar slides off its edge and windows get the space; the
@@ -95,7 +98,7 @@ PanelWindow {
     y: Theme.barAtBottom ? parent.height - height - Theme.barInset + bar.slide : Theme.barInset - bar.slide
     height: Theme.barHeight
     radius: Theme.floating ? height / 2 : 0
-    color: bar.island || Theme.keystone || !Config.barBackground ? "transparent" : Theme.glass
+    color: bar.island || Theme.keystone || !Config.barBackground ? "transparent" : bar.monolith ? Theme.surface : Theme.glass
     border.width: (Theme.style === "dock" || bar.glaze) && Config.barBackground ? 1 : 0
     border.color: Theme.glassEdge
 
@@ -194,7 +197,7 @@ PanelWindow {
 
   // Neon: the hairline, brightest in the middle, gone at the edges.
   Rectangle {
-    visible: Theme.sharp
+    visible: Theme.style === "neon"
     anchors { left: strip.left; right: strip.right; top: strip.bottom }
     height: 1
     gradient: Gradient {
@@ -203,6 +206,23 @@ PanelWindow {
       GradientStop { position: 0.5; color: Theme.alpha(Theme.accent, 0.55) }
       GradientStop { position: 1; color: "transparent" }
     }
+  }
+
+  // Monolith: a solid line along the slab's foot.
+  Rectangle {
+    visible: bar.monolith && Config.barBackground
+    anchors { left: strip.left; right: strip.right; top: strip.bottom }
+    height: 1
+    color: Theme.outline
+  }
+  // Its "//" between the parts.
+  component Slashes: Text {
+    visible: bar.monolith
+    text: "//"
+    color: Theme.faint
+    font.family: "monospace"
+    font.pixelSize: Theme.fontS
+    font.bold: true
   }
 
   // The island style's pills: one behind each group.
@@ -245,6 +265,7 @@ PanelWindow {
       onClicked: Shell.toggle("launcher", bar.modelData.name)
     }
     Workspaces { id: workspaces; screen: bar.modelData }
+    Slashes {}
     WindowTitle { visible: !Theme.keystone && !bar.orbit; Layout.maximumWidth: Math.max(0, centre.x - strip.x - 260) }
   }
 
@@ -276,6 +297,7 @@ PanelWindow {
     }
     spacing: 12
 
+    Slashes {}
     ToolButtons {}
     ResourcesChip {}
     SlideControl {

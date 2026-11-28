@@ -273,14 +273,14 @@ mkdir -p "$HOME/.config/friday"
 # dawn) over the headless output's black, with no blur here.
 declare -A look_bg=([core]=0c0e11 [ember]=090b0e [polar]=21252e [frost]=0a0e13 [moss]=0b0d0a [dawn]=c6c3be [walnut]=c2bdb1 [nocturne]=0f1021 [neon]=08090c)
 declare -A line_bg=([core]=181b21)
-for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn orbit:polar statusline:core glaze:frost blade:moss lean:walnut island:nocturne taskbar:core neon:neon neon:core; do
+for look in lean:core island:polar dock:frost lean:moss ember:dawn island:dawn dock:ember rail:core rail:dawn keystone:core keystone:dawn orbit:polar statusline:core glaze:frost blade:moss lean:walnut island:nocturne taskbar:core neon:neon neon:core monolith:core; do
   style=${look%%:*} palette=${look##*:}
   # The dock and the shelf are on for these, so they load under every style.
   printf '{ "style": "%s", "palette": "%s", "dock": true, "dockApps": ["foot"], "shelf": true }\n' "$style" "$palette" >"$HOME/.config/friday/shell.json"
   sleep 3; grim "$W/look-${look/:/-}-bar.png" 2>/dev/null || true
   half=top; [[ $style == dock || $style == statusline || $style == taskbar ]] && half=bottom; [[ $style == rail ]] && half="0,0,46,900"
   # The statusline is solid: the palette's surface, not glass.
-  want=${look_bg[$palette]}; [[ $style == statusline ]] && want=${line_bg[$palette]}
+  want=${look_bg[$palette]}; [[ $style == statusline || $style == monolith ]] && want=${line_bg[$palette]}
   if [[ -s "$W/look-${look/:/-}-bar.png" ]] && need python3; then
     n=$(python3 "$(dirname "$0")/png_colour.py" "$W/look-${look/:/-}-bar.png" "#$want" "$half" 2>/dev/null || echo 0)
     if (( n > 3000 )); then pass "$style/$palette: the bar shows it (${n} px of #$want at the $half)"

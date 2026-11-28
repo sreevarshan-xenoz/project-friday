@@ -49,6 +49,8 @@ import Quickshell.Io
 //   neon    a slim bar flush with the top, square-cut, with one hairline of
 //           accent along its foot; drawers drop as sharp panels with small
 //           corner brackets (best with the neon palette)
+//   monolith  one solid square-cut slab along the top, like a HUD: no glass,
+//           "//" between its parts, a solid line along its foot
 Singleton {
   id: root
 
@@ -343,7 +345,10 @@ Singleton {
   readonly property string style: Config.style
   readonly property bool floating: style === "island" || style === "dock" || style === "orbit" || style === "glaze"
   // Square-cut: no rounded corners anywhere, no concave shoulders.
-  readonly property bool sharp: style === "neon"
+  readonly property bool sharp: style === "neon" || monolith
+  // The monolith: one solid square slab along the top, a HUD with "//"
+  // between its parts; no glass, no blur.
+  readonly property bool monolith: style === "monolith"
   // The rail: a column down the left edge instead of a bar along the top.
   readonly property bool rail: style === "rail"
   readonly property int railWidth: 46
