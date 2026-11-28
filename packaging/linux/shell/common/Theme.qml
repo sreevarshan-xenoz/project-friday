@@ -30,6 +30,8 @@ import Quickshell.Io
 //   rail    one slim column down the left edge; drawers open beside it
 //   orbit   two floating pills, apps and workspaces at the top left, FRIDAY
 //           and the status at the top right; the middle stays clear
+//   blade   flush, with a hairline under it that follows the active
+//           workspace; volume and brightness slide open on hover
 //   glaze   one floating glass bar along the top with a lit rim; a band of
 //           FRIDAY's colours sweeps along it while it works
 //   statusline  one slim solid line along the bottom, in terminal-style
