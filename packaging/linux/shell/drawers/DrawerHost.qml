@@ -126,7 +126,7 @@ PanelWindow {
     }
     // Neon: two small accent brackets, top left and bottom right.
     Repeater {
-      model: Theme.sharp ? [0, 1] : []
+      model: Theme.style === "neon" ? [0, 1] : []
       Item {
         id: bracket
         required property int modelData
