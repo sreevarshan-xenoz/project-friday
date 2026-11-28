@@ -71,7 +71,7 @@
       "type": "command",
       "key": "\ue900 OS",
       "keyColor": "blue",
-      "text": "echo \"FRIDAY OS (M7 Cognitive Edition)\""
+      "text": "echo \"FRIDAY OS\""
     },
     {
       "type": "command",

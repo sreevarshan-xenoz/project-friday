@@ -162,6 +162,13 @@ else pass "boot menu, login text and installer steps do not say Omarchy"; fi
 echo "boot splash"
 [[ -s "$ROOT/../usr/share/friday-installer/plymouth-logo.png" ]] && pass "FRIDAY's splash logo ships in the ISO" || fail "plymouth-logo.png is missing"
 grep -q 'friday-installer/plymouth-logo.png /mnt/usr/share/plymouth/themes/omarchy/logo.png' "$ROOT/installer" && pass "the installer puts it into the installed splash theme" || fail "the installer does not use the splash logo"
+# The splash needs plymouth itself, its theme, its initramfs hook and
+# `quiet splash` (all four were once missing, so every boot showed text).
+awk '/^pacstrap_with_retry \/mnt base linux/,/[^\\]$/' "$ROOT/installer" | grep -qw plymouth && pass "the installer installs plymouth" || fail "plymouth isn't in the installer's pacstrap"
+grep -q 'cp -r "$OMARCHY_PATH/default/plymouth/." /mnt/usr/share/plymouth/themes/omarchy/' "$ROOT/installer" && pass "the splash theme comes from Omarchy's tree" || fail "the splash theme isn't copied from Omarchy's tree"
+grep -q 's/\\b(systemd|udev)\\b/\\1 plymouth/' "$ROOT/installer" && pass "plymouth's hook goes into the initramfs" || fail "no plymouth hook in the initramfs"
+grep -q 'rw quiet splash ' "$ROOT/installer" && pass "the boot entry asks for the splash" || fail "the boot entry has no quiet splash"
+if grep -q '^options .*console=ttyS0' "$ROOT/installer"; then fail "every install boots with the serial console"; else pass "the serial console is only on the debug install"; fi
 
 echo "login security"
 guarded=$(awk '/if \[\[ "\$AUTOLOGIN" == "true" \]\]/ {g=1} /EOF_SDDM_AUTO > \/mnt\/etc\/sddm.conf.d\/autologin.conf/ {print (g ? "guarded" : "unguarded"); exit}' "$ROOT/installer")

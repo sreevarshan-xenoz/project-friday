@@ -6,7 +6,7 @@
   ╚═╝     ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝   ╚═╝        ╚═════╝ ╚══════╝[0m
 
   [38;2;187;154;247mWelcome to FRIDAY OS — Cognitive Operating System[0m
-  [38;2;86;95;137mHyprland + Quickshell | Architecture: Project FRIDAY M7[0m
+  [38;2;86;95;137mHyprland + FRIDAY Shell[0m
 
   [38;2;125;207;255m• Assistant & Cognitive Daemon:[0m  friday status | friday goal "<objective>"
   [38;2;125;207;255m• Desktop & Theme Management:  [0m  friday theme list | friday theme set <theme>
