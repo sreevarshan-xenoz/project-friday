@@ -27,26 +27,6 @@ PanelWindow {
   property real reveal: shown ? 1 : 0
   Behavior on reveal { NumberAnimation { duration: Theme.medium; easing.type: Theme.easing } }
 
-  // Pinned entries first (in their order), then running apps not pinned.
-  readonly property var pinned: (Config.pick("dockApps", []) || []).map(id => DesktopEntries.byId(String(id))).filter(e => e)
-  readonly property var items: {
-    const out = pinned.map(e => ({ entry: e, id: e.id }));
-    for (const t of ToplevelManager.toplevels.values) {
-      const e = DesktopEntries.heuristicLookup(t.appId);
-      const id = e ? e.id : t.appId;
-      if (id && !out.some(o => o.id === id))
-        out.push({ entry: e, id: id, appId: t.appId });
-    }
-    return out;
-  }
-  function windowsOf(item) {
-    const want = String(item.appId || item.id).toLowerCase();
-    return ToplevelManager.toplevels.values.filter(t => {
-      const a = String(t.appId).toLowerCase();
-      return a === want || (item.entry && DesktopEntries.heuristicLookup(t.appId) === item.entry);
-    });
-  }
-
   anchors { bottom: true; left: true; right: true }
   // The dock, the gap under it and room above it for the app's name.
   implicitHeight: 104
@@ -102,11 +82,11 @@ PanelWindow {
         anchors.centerIn: parent
         spacing: 6
         Repeater {
-          model: dock.items
+          model: Apps.items
           Item {
             id: slot
             required property var modelData
-            readonly property var wins: dock.windowsOf(modelData)
+            readonly property var wins: Apps.windowsOf(modelData)
             readonly property bool front: wins.some(w => w.activated)
             implicitWidth: 44
             implicitHeight: 48
@@ -124,7 +104,7 @@ PanelWindow {
               Behavior on y { NumberAnimation { duration: Theme.fast; easing.type: Theme.easing } }
               width: 34; height: 34
               sourceSize: Qt.size(64, 64)
-              source: AppIcons.source(slot.modelData.entry ? slot.modelData.entry.icon : slot.modelData.appId)
+              source: Apps.icon(slot.modelData)
               asynchronous: true
             }
             Glyph {
@@ -145,22 +125,12 @@ PanelWindow {
               Behavior on width { NumberAnimation { duration: Theme.fast } }
             }
             HoverHandler { id: tap }
-            TapHandler {
-              onTapped: {
-                if (slot.wins.length > 0) {
-                  // In front already: the next of its windows; otherwise its first.
-                  const i = slot.wins.findIndex(w => w.activated);
-                  slot.wins[(i + 1) % slot.wins.length].activate();
-                } else if (slot.modelData.entry) {
-                  slot.modelData.entry.execute();
-                }
-              }
-            }
+            TapHandler { onTapped: Apps.activate(slot.modelData) }
             Binding {
               when: tap.hovered
               target: dock
               property: "hoverName"
-              value: slot.modelData.entry ? slot.modelData.entry.name : slot.modelData.id
+              value: Apps.name(slot.modelData)
             }
           }
         }

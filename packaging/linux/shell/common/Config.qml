@@ -45,7 +45,7 @@ Singleton {
   property var featuresOff: []
   function featureOn(name) { return !root.featuresOff.includes(name); }
 
-  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade"]
+  readonly property var styles: ["ember", "lean", "island", "dock", "rail", "keystone", "orbit", "statusline", "glaze", "blade", "taskbar"]
   // A style and palette that go together (Look > Presets, friday shell
   // preset); keep in step with the CLI's list.
   readonly property var presets: [

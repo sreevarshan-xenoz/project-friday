@@ -27,6 +27,7 @@ Ideas (look and behaviour, written fresh for FRIDAY Shell):
 | [caelestia-dots/shell](https://github.com/caelestia-dots/shell) | GPL-3.0 | the rose palette, from its default colour scheme (`common/Theme.qml`) |
 | [noctalia-dev/noctalia-shell](https://github.com/noctalia-dev/noctalia-shell) | MIT | the nocturne palette, from its default "Noctalia" palette (`common/Theme.qml`) |
 | [HyDE-Project/HyDE](https://github.com/HyDE-Project/HyDE), [Catppuccin](https://github.com/catppuccin/catppuccin) | GPL-3.0, MIT | the mauve palette: Catppuccin Mocha, HyDE's default theme (`common/Theme.qml`) |
+| [end-4/dots-hyprland](https://github.com/end-4/dots-hyprland) | GPL-3.0 | the taskbar bar style, after its Windows-style "waffle" bar: apps and FRIDAY in the middle of a bottom bar (an idea, `bar/TaskbarBar.qml`) |
 
 ## Shipped alongside FRIDAY (unchanged, under their own licenses)
 

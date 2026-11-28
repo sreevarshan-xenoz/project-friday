@@ -34,8 +34,9 @@ ShellRoot {
       DesktopWidgets { modelData: perScreen.modelData }
       // The top bar, or the rail down the left edge (style "rail").
       // The statusline style has its own slim bar along the bottom.
-      LazyLoader { active: !Theme.rail && !Theme.statusline; Bar { modelData: perScreen.modelData } }
+      LazyLoader { active: !Theme.rail && !Theme.statusline && !Theme.taskbar; Bar { modelData: perScreen.modelData } }
       LazyLoader { active: Theme.statusline; StatuslineBar { modelData: perScreen.modelData } }
+      LazyLoader { active: Theme.taskbar; TaskbarBar { modelData: perScreen.modelData } }
       LazyLoader { active: Theme.rail; RailBar { modelData: perScreen.modelData } }
       LazyLoader { active: Config.dock; Dock { modelData: perScreen.modelData } }
       LazyLoader { active: Config.shelf; Shelf { modelData: perScreen.modelData } }
