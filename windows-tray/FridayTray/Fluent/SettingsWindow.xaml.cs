@@ -206,6 +206,34 @@ internal sealed partial class SettingsWindow : FluentWindow
         }
         if (!any)
             yield return Note("No browser FRIDAY knows was found (Chrome, Edge, Brave, Vivaldi, Firefox).");
+
+        yield return Caption("Page reader");
+        yield return Note("A small headless browser (obscura) FRIDAY uses to read web pages for questions that name a link. It runs on this PC and refuses local and private addresses.");
+        var pageReaderInstalled = ObscuraInstaller.IsInstalled(_install.Paths);
+        yield return Pair("Obscura", pageReaderInstalled ? "Installed" : "Not installed");
+        yield return Row(Pill(pageReaderInstalled ? "Reinstall page reader" : "Install page reader", SymbolRegular.ArrowDownload24, primary: !pageReaderInstalled), InstallPageReader);
+    }
+
+    private async void InstallPageReader()
+    {
+        try
+        {
+            Said("Downloading page reader…");
+            var (ok, error) = await Task.Run(() => ObscuraInstaller.InstallAsync(_install.Paths));
+            if (!ok)
+            {
+                MessageBox.Show(this, "The page reader wasn't installed:\n\n" + error, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else
+            {
+                Said("Page reader installed.");
+                Show("Browser");
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "The page reader wasn't installed:\n\n" + ex.Message, "FRIDAY", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private IEnumerable<UIElement> HealthAndUpdates()

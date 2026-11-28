@@ -42,4 +42,6 @@ public sealed class Paths
     public string AppInstructionsFile => Path.Combine(ConfigDir, "app-instructions");
     public string PrivateWindowsFile => Path.Combine(ConfigDir, "private-windows");
     public string SensitiveWindowsFile => Path.Combine(ConfigDir, "sensitive-windows");
+    public string ObscuraDir => Path.Combine(StateDir, "obscura");
+    public string ObscuraExe => Path.Combine(ObscuraDir, "obscura.exe");
 }

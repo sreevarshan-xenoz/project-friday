@@ -78,7 +78,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          git add packaging/tools/tools.json
+          git add packaging/tools/tools.json windows-tray/FridayTray.Core/ObscuraInstaller.cs
           git commit -q -m "chore(tools): move pinned tools" -m "$(cat "$CHECK/summary.md")"
           git push -q origin "$branch"
           body="The weekly check verified new releases and moved their pins in \`packaging/tools/tools.json\` (versions and checksums only)."$'\n\n'"$(cat "$CHECK/summary.md")"$'\n\n'"CI was started on the branch by the workflow; merge when it is green. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
