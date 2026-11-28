@@ -225,6 +225,7 @@ public static class AppSettings
         ("screen-what-changed", "\"What changed?\" about the same window sends only the lines that changed since the last ask"),
         ("agent-compare", "Two agents on the same task, each in its own copy, compared before you keep one"),
         ("backup-new-home", "A backup restored on another computer points saved folders at the new home"),
+        ("agent-firewall", "A coding agent running on its own still stops for you before an admin command, a script from the internet, your keys or startup files"),
     ];
 
     public static bool ExtensionAutoinstallOn(IReadOnlyDictionary<string, string> env) =>
