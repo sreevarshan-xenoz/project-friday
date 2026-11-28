@@ -127,7 +127,7 @@ if [[ -n "$own_line" && -n "$style_line" ]] && (( own_line < style_line )) \
 else
   fail "installer doesn't save the style, or runs friday shell style before the user owns ~/.config/friday"
 fi
-for opt in "Lean (thin borders, small gaps, no blur" "FRIDAY Shell Core" "FRIDAY Shell Polar" "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "Rail (a slim column down the left edge)" "Keystone (one notch in the middle of the top edge)" "Orbit (two floating pills, the middle left clear)" "Statusline (one slim line along the bottom, like a terminal's)" "Glaze (one floating glass bar along the top, a lit rim)" "Blade (flush, a hairline that follows the workspace; sliders on hover)" "Taskbar (along the bottom, the way Windows lays it out)" "FRIDAY Shell Dawn"; do
+for opt in "Lean (thin borders, small gaps, no blur" "FRIDAY Shell Core" "FRIDAY Shell Polar" "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "Rail (a slim column down the left edge)" "Keystone (one notch in the middle of the top edge)" "Orbit (two floating pills, the middle left clear)" "Statusline (one slim line along the bottom, like a terminal's)" "Glaze (one floating glass bar along the top, a lit rim)" "Blade (flush, a hairline that follows the workspace; sliders on hover)" "Taskbar (along the bottom, the way Windows lays it out)" "Neon (slim and square-cut, a hairline of accent under it)" "FRIDAY Shell Dawn" "FRIDAY Shell Neon"; do
   grep -qF "$opt" "$AIROOTFS/root/configurator" && pass "installer offers: $opt" || fail "installer no longer offers: $opt"
 done
 
