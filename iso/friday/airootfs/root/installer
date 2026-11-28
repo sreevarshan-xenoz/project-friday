@@ -28,6 +28,7 @@ PASSWORD="${PASSWORD:-}"
 TIMEZONE="${TIMEZONE:-UTC}"
 THEME="${THEME:-FRIDAY Shell Core (obsidian and core red; the FRIDAY OS look)}"
 SHELL_STYLE="${SHELL_STYLE:-Lean (thin borders, small gaps, no blur; the FRIDAY OS look)}"
+SHELL_PET="${SHELL_PET:-Mote}"
 SESSION="${SESSION:-Hyprland (tiling, the FRIDAY OS default)}"
 SDDM_THEME="${SDDM_THEME:-SilentSDDM FRIDAY Edition (Deep Ice & Purple / Material You)}"
 AUTO_REBOOT="${AUTO_REBOOT:-false}"
@@ -831,8 +832,17 @@ else
     Monolith*) SHELL_STYLE_ID=monolith ;;
     *)       SHELL_STYLE_ID=ember ;;
   esac
-  jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" \
-    '{style: $style, palette: $palette, polkit: true} + (if $wp == "" then {} else {wallpaper: $wp} end)' \
+  case "$SHELL_PET" in
+    "No pet"*) SHELL_PET_ID=off ;;
+    Ferro*) SHELL_PET_ID=ferro ;;
+    Iris*) SHELL_PET_ID=iris ;;
+    Bolt*) SHELL_PET_ID=bolt ;;
+    Kiri*) SHELL_PET_ID=kiri ;;
+    Nox*) SHELL_PET_ID=nox ;;
+    *) SHELL_PET_ID=mote ;;
+  esac
+  jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" --arg pet "$SHELL_PET_ID" \
+    '{style: $style, palette: $palette, polkit: true, pet: $pet} + (if $wp == "" then {} else {wallpaper: $wp} end)' \
     >"/mnt$USER_HOME/.config/friday/shell.json"
   # Windows' gaps, corners and borders to match (~/.config/friday/hypr-look.lua),
   # written as the user, who must own the directory first.

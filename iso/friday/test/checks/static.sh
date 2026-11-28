@@ -96,6 +96,19 @@ qml_presets=$(grep -oE '\{ name: "[a-z]+", style: "[a-z]+", palette: "[a-z]+" \}
 cli_presets=$(sed -n 's/^ *presets="\(.*\)"$/\1/p' "$F_CLI")
 if [[ -n "$qml_presets" && "$qml_presets" == "$cli_presets" ]]; then pass "presets match in Look and the CLI ($qml_presets)"
 else fail "presets differ: Config.qml [$qml_presets], friday [$cli_presets]"; fi
+# The desktop pets: the same list in Look and the CLI, and each has its
+# three sprite sheets (8x6 frames of 160 px).
+qml_pets=$(sed -n 's/^ *readonly property var pets: \[\(.*\)\]$/\1/p' "$REPO_ROOT/packaging/linux/shell/common/Config.qml" | tr -d '"' | sed 's/, */ /g')
+cli_pets=$(sed -n 's/^ *pets="\(.*\)"$/\1/p' "$F_CLI")
+if [[ -n "$qml_pets" && "$qml_pets" == "$cli_pets" ]]; then pass "pets match in Look and the CLI ($qml_pets)"
+else fail "pets differ: Config.qml [$qml_pets], friday [$cli_pets]"; fi
+for pet in $qml_pets; do
+  for s in idle think happy; do
+    f="$REPO_ROOT/packaging/linux/shell/pets/$pet/$s.png"
+    if [ -f "$f" ] && [ "$(python3 -I -c 'import struct,sys; d=open(sys.argv[1],"rb").read(24); print("%dx%d" % struct.unpack(">II", d[16:24]))' "$f")" = 1280x960 ]; then pass "pet $pet: $s sheet"
+    else fail "pet $pet: $s.png missing or not 1280x960"; fi
+  done
+done
 grep -q 'dofile(friday_look)' "$AIROOTFS/etc/skel/.config/hypr/hyprland.lua" \
   && pass "FRIDAY OS's hyprland.lua loads FRIDAY Shell's window look" \
   || fail "FRIDAY OS's hyprland.lua does not load ~/.config/friday/hypr-look.lua"
@@ -127,7 +140,7 @@ if [[ -n "$own_line" && -n "$style_line" ]] && (( own_line < style_line )) \
 else
   fail "installer doesn't save the style, or runs friday shell style before the user owns ~/.config/friday"
 fi
-for opt in "Lean (thin borders, small gaps, no blur" "FRIDAY Shell Core" "FRIDAY Shell Polar" "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "Rail (a slim column down the left edge)" "Keystone (one notch in the middle of the top edge)" "Orbit (two floating pills, the middle left clear)" "Statusline (one slim line along the bottom, like a terminal's)" "Glaze (one floating glass bar along the top, a lit rim)" "Blade (flush, a hairline that follows the workspace; sliders on hover)" "Taskbar (along the bottom, the way Windows lays it out)" "Neon (slim and square-cut, a hairline of accent under it)" "Monolith (one solid square slab along the top, like a HUD)" "FRIDAY Shell Dawn" "FRIDAY Shell Neon"; do
+for opt in "Lean (thin borders, small gaps, no blur" "FRIDAY Shell Core" "FRIDAY Shell Polar" "Island (floating pills along the top)" "Dock (floating bar along the bottom)" "Rail (a slim column down the left edge)" "Keystone (one notch in the middle of the top edge)" "Orbit (two floating pills, the middle left clear)" "Statusline (one slim line along the bottom, like a terminal's)" "Glaze (one floating glass bar along the top, a lit rim)" "Blade (flush, a hairline that follows the workspace; sliders on hover)" "Taskbar (along the bottom, the way Windows lays it out)" "Neon (slim and square-cut, a hairline of accent under it)" "Monolith (one solid square slab along the top, like a HUD)" "Mote (a little smoke creature; it thinks while FRIDAY works)" "Ferro (a cyber fox)" "Iris (a little drone with a camera eye)" "Bolt (a robot cat)" "Kiri (an origami bird)" "Nox (a moth spirit)" "No pet" "FRIDAY Shell Dawn" "FRIDAY Shell Neon"; do
   grep -qF "$opt" "$AIROOTFS/root/configurator" && pass "installer offers: $opt" || fail "installer no longer offers: $opt"
 done
 
@@ -313,11 +326,11 @@ for p in hyprlock hypridle swaybg; do
   grep -qw "$p" "$AIROOTFS/root/installer" && pass "installer installs $p" || fail "installer does not install $p"
 done
 if need jq; then
-  # The installer's FRIDAY Shell settings: polkit on, the theme's wallpaper.
+  # The installer's FRIDAY Shell settings: polkit on, the theme's wallpaper, the pet.
   line=$(grep -A2 'jq -n --arg style "$SHELL_STYLE_ID"' "$AIROOTFS/root/installer" | sed -n "s/^ *'\(.*\)' \\\\$/\1/p")
-  out=$(jq -nc --arg style lean --arg palette core --arg wp /usr/share/friday/wallpapers/core/a.jpg "$line" 2>&1)
-  [[ "$out" == '{"style":"lean","palette":"core","polkit":true,"wallpaper":"/usr/share/friday/wallpapers/core/a.jpg"}' ]] \
-    && pass "installer turns on FRIDAY's password prompt and wallpaper" || fail "installer's shell.json: $out"
+  out=$(jq -nc --arg style lean --arg palette core --arg wp /usr/share/friday/wallpapers/core/a.jpg --arg pet mote "$line" 2>&1)
+  [[ "$out" == '{"style":"lean","palette":"core","polkit":true,"pet":"mote","wallpaper":"/usr/share/friday/wallpapers/core/a.jpg"}' ]] \
+    && pass "installer turns on FRIDAY's password prompt, wallpaper and pet" || fail "installer's shell.json: $out"
 fi
 grep -q 'OMARCHY_PATH=/usr/share/omarchy PATH=/usr/share/omarchy/bin:\\$PATH omarchy-theme-set' "$AIROOTFS/root/installer" \
   && pass "installer runs omarchy-theme-set with Omarchy's environment" \

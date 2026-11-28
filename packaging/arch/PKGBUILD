@@ -149,7 +149,7 @@ package() {
     "$lin/helper/org.friday.helper.policy" \
     -t "$pkgdir/usr/share/friday/helper"
   # FRIDAY Shell (Quickshell config), run with `friday shell`.
-  find "$lin/shell" -type f -name '*.qml' -print0 | while IFS= read -r -d '' f; do
+  find "$lin/shell" -type f \( -name '*.qml' -o -name '*.png' \) -print0 | while IFS= read -r -d '' f; do
     install -Dm644 "$f" "$pkgdir/usr/share/friday/shell/${f#"$lin/shell/"}"
   done
   # The key FRIDAY releases are signed with, for pacman's [friday] repo.
