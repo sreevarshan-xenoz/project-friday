@@ -776,6 +776,7 @@ else
     *"FRIDAY Shell Frost"*) THEME_SLUG="matte-black"; SHELL_PALETTE="frost" ;;
     *"FRIDAY Shell Moss"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="moss" ;;
     *"FRIDAY Shell Dawn"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="dawn" ;;
+    *"FRIDAY Shell Neon"*)  THEME_SLUG="matte-black"; SHELL_PALETTE="neon" ;;
     *"FRIDAY Shell"*) THEME_SLUG="matte-black"; SHELL_PALETTE="ember" ;;
     *"Tokyo Night"*)  THEME_SLUG="tokyo-night" ;;
     *"Catppuccin"*)   THEME_SLUG="catppuccin" ;;
@@ -826,6 +827,7 @@ else
     Glaze*) SHELL_STYLE_ID=glaze ;;
     Blade*) SHELL_STYLE_ID=blade ;;
     Taskbar*) SHELL_STYLE_ID=taskbar ;;
+    Neon*) SHELL_STYLE_ID=neon ;;
     *)       SHELL_STYLE_ID=ember ;;
   esac
   jq -n --arg style "$SHELL_STYLE_ID" --arg palette "$SHELL_PALETTE" --arg wp "$WALLPAPER" \

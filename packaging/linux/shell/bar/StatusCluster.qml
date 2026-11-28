@@ -25,7 +25,7 @@ Rectangle {
 
   implicitWidth: vertical ? Math.max(28, row.implicitWidth + 8) : row.implicitWidth + 22
   implicitHeight: vertical ? row.implicitHeight + 20 : 24
-  radius: height / 2
+  radius: Theme.round(height)
   color: mouse.containsMouse ? Theme.raised : Theme.surface
   Behavior on color { ColorAnimation { duration: Theme.fast } }
 

@@ -69,7 +69,7 @@ Item {
     width: Math.round(island.faceItem.implicitWidth + 2 * 14)
     height: island.face === "media" ? island.openH : island.restH
     y: island.growUp ? island.restH - height : 0
-    radius: Math.min(height / 2, 22)
+    radius: Theme.sharp ? 3 : Math.min(height / 2, 22)
     color: island.face === "idle" ? (hover.hovered ? Theme.surface : "transparent")
       : island.face === "working" || island.face === "listening" ? Theme.alpha(Theme.accent, 0.14)
       : Theme.raised
@@ -320,7 +320,7 @@ Item {
         spacing: 12
         ClippingRectangle {
           implicitWidth: 44; implicitHeight: 44
-          radius: 12
+          radius: Theme.sharp ? 2 : 12
           color: Theme.overlay
           Image {
             anchors.fill: parent

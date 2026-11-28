@@ -60,7 +60,7 @@ PanelWindow {
   onVisibleChanged: if (!visible) shown = ""
 
   anchors { top: true; left: true; right: true; bottom: true }
-  margins.top: Theme.rail ? Theme.gap : Theme.barAtBottom ? 0 : Theme.floating ? Theme.barReach + Theme.gap : Theme.barHeight
+  margins.top: Theme.rail ? Theme.gap : Theme.barAtBottom ? 0 : Theme.floating ? Theme.barReach + Theme.gap : Theme.barHeight + (Theme.sharp ? 6 : 0)
   margins.left: Theme.leftReach
   margins.bottom: Theme.barAtBottom ? Theme.barReach + Theme.gap : 0
   exclusionMode: ExclusionMode.Ignore
@@ -93,11 +93,11 @@ PanelWindow {
 
     // Plain cards (floating styles, the rail, the statusline) or, in the
     // ember styles, a body with shoulders that grows out of the bar.
-    readonly property bool card: Theme.floating || Theme.rail || Theme.statusline || Theme.taskbar
+    readonly property bool card: Theme.floating || Theme.rail || Theme.statusline || Theme.taskbar || Theme.sharp
     // Ember: room for the shoulders either side. A card: just the card.
     readonly property real shoulder: card ? 0 : Theme.fillet
     // A card's distance from the screen's side.
-    readonly property real side: Theme.floating ? Theme.barInset : Theme.statusline || Theme.taskbar ? Theme.gap : -Theme.fillet
+    readonly property real side: Theme.floating ? Theme.barInset : Theme.statusline || Theme.taskbar ? Theme.gap : Theme.sharp ? 8 : -Theme.fillet
 
     width: bodyW + 2 * shoulder
     height: bodyH * host.reveal
@@ -123,6 +123,22 @@ PanelWindow {
       color: Theme.glass
       border.width: 1
       border.color: Theme.glassEdge
+    }
+    // Neon: two small accent brackets, top left and bottom right.
+    Repeater {
+      model: Theme.sharp ? [0, 1] : []
+      Item {
+        id: bracket
+        required property int modelData
+        readonly property bool far: modelData === 1
+        x: far ? drawer.width - 14 : 0
+        y: far ? drawer.height - 14 : 0
+        width: 14
+        height: 14
+        opacity: host.reveal
+        Rectangle { width: 14; height: 1; color: Theme.accent; y: bracket.far ? 13 : 0 }
+        Rectangle { width: 1; height: 14; color: Theme.accent; x: bracket.far ? 13 : 0 }
+      }
     }
 
     Item {

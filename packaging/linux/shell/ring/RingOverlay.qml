@@ -59,7 +59,7 @@ PanelWindow {
     y: above ? ring.y - height - 8 : ring.y + ring.height + 8
     width: text.implicitWidth + 20
     height: text.implicitHeight + 10
-    radius: height / 2
+    radius: Theme.round(height)
     color: Theme.glass
     border.width: 1
     border.color: Theme.glassEdge

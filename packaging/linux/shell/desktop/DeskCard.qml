@@ -21,7 +21,7 @@ Rectangle {
   x: Math.round((saved ? saved.x : homeX) * Math.max(1, areaW - width))
   y: Math.round((saved ? saved.y : homeY) * Math.max(1, areaH - height))
 
-  radius: 22
+  radius: Theme.sharp ? 3 : 22
   color: Theme.glassSolid
   border.width: 1
   border.color: hover.hovered ? Theme.alpha(Theme.accent, 0.45) : Theme.glassEdge

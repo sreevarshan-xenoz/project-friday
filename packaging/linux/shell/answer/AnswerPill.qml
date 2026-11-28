@@ -68,7 +68,7 @@ PanelWindow {
     height: 0
     anchors.horizontalCenter: parent.horizontalCenter
     y: Theme.barAtBottom ? parent.height - height : 0
-    radius: Math.min(Theme.radius + 6, height / 2)
+    radius: Theme.sharp ? 3 : Math.min(Theme.radius + 6, height / 2)
     color: Theme.glass
     border.width: 1
     border.color: Answer.ok ? Theme.glassEdge : Theme.error
@@ -307,7 +307,7 @@ PanelWindow {
         Layout.fillWidth: true
         Layout.preferredHeight: 40
         visible: card.followUpOpen
-        radius: height / 2
+        radius: Theme.round(height)
         color: Theme.glassWell
         border.width: 1
         border.color: followUp.activeFocus ? Theme.accent : Theme.outline

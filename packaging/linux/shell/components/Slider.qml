@@ -27,7 +27,7 @@ Item {
   Rectangle {
     id: track
     anchors.fill: parent
-    radius: height / 2
+    radius: Theme.round(height)
     color: Theme.raised
     border.width: root.activeFocus ? 2 : 0
     border.color: Theme.text
@@ -36,7 +36,7 @@ Item {
     Rectangle {
       height: parent.height
       width: Math.max(parent.height, parent.width * root.value)
-      radius: height / 2
+      radius: Theme.round(height)
       color: root.fill
       Behavior on width { enabled: !drag.pressed; NumberAnimation { duration: Theme.fast; easing.type: Theme.easing } }
     }
